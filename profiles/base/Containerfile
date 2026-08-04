@@ -1,0 +1,69 @@
+FROM registry.opensuse.org/opensuse/tumbleweed:latest
+MAINTAINER Jan Baier <jbaier@suse.cz>
+
+# Basic metadata
+LABEL maintainer="Jan Baier <jbaier@suse.cz>" \
+      description="Paddock - Ultra-Minimal Base AI sandbox container"
+
+# 1. Install core system packages
+RUN zypper --non-interactive refresh && \
+    zypper --non-interactive install --no-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        diffutils \
+        file \
+        findutils \
+        gawk \
+        git \
+        gzip \
+        jq \
+        less \
+        nodejs \
+        npm \
+        openssh-clients \
+        python3 \
+        starship \
+        tar \
+        unzip \
+        util-linux \
+        wget \
+        which \
+        zip \
+    && zypper clean --all \
+    && rm -rf /var/cache/zypp/* /tmp/* /var/tmp/*
+
+# 2. Install AI CLI assistants and the Google Cloud CLI globally.
+# NOTE: the cloud-sdk repo is x86_64-only, so this image is x86_64-only.
+RUN npm install -g @google/gemini-cli@latest opencode-ai && \
+    npm cache clean --force && \
+    rpm --import https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg && \
+    zypper --non-interactive addrepo --gpgcheck --refresh --name "Google Cloud CLI" https://packages.cloud.google.com/yum/repos/cloud-sdk-el10-x86_64 google-cloud-cli && \
+    zypper --gpg-auto-import-keys refresh && \
+    zypper --non-interactive install --no-recommends google-cloud-cli && \
+    zypper clean --all && \
+    rm -rf /var/cache/zypp/* /tmp/* /var/tmp/*
+
+# 3. Create non-root user `ai` with a pristine home directory
+RUN groupadd --gid 1000 ai && \
+    useradd --uid 1000 --gid 1000 --home-dir /home/ai --shell /bin/bash --no-create-home ai && \
+    mkdir -p /home/ai && \
+    chown ai:ai /home/ai
+
+# 4. Global configurations
+RUN echo 'eval "$(starship init bash)"' >> /etc/bash.bashrc
+
+# 5. Copy and setup entrypoint script for secure guest VM privilege dropping
+COPY --chmod=755 profiles/base/entrypoint.sh /usr/local/bin/entrypoint.sh
+
+USER ai
+ENV HOME=/home/ai \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/bin:/usr/bin:/bin \
+    TERM=xterm-256color
+
+WORKDIR /home/ai
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["bash", "--login"]
