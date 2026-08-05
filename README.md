@@ -39,8 +39,8 @@ paddock/
 │   ├── base/
 │   │   ├── entrypoint.sh       # Secure guest VM privilege-dropping entrypoint
 │   │   └── Containerfile       # Defines 'paddock-base:latest'
-│   └── latest/
-│       └── Containerfile       # Default general-purpose profile: starts FROM paddock-base:latest
+│   └── default/
+│       └── Containerfile       # Default general-purpose profile: starts FROM paddock-base:latest, builds 'paddock:latest'
 ├── paddock.sh                  # Simple execution/orchestration shell script
 ├── test_paddock.sh             # Automated mock-based test suite
 └── README.md
@@ -53,11 +53,11 @@ paddock/
 ### 1. Build a Profile
 To build a profile (or build the core `paddock-base`):
 ```bash
-# Builds the general-purpose "latest" profile
+# Builds the general-purpose default profile
 ./paddock.sh build
 
 # Or build a specific profile
-./paddock.sh build latest
+./paddock.sh build default
 ```
 `build` only does work when the image is missing or older than its `Containerfile`, and refreshes
 `paddock-base` the same way. `run` performs the same check before launching, so an edit to
@@ -65,6 +65,14 @@ To build a profile (or build the core `paddock-base`):
 ```bash
 ./paddock.sh rebuild          # forces the default profile and its base
 ```
+
+#### Overriding the Default Profile
+The general-purpose profile always builds and runs as `paddock:latest`, regardless of where its
+`Containerfile` comes from. Normally that is `profiles/default/`, but if you create your own
+`profiles/latest/Containerfile` (not shipped by this repo, and listed in `.gitignore`), it takes
+precedence for every spelling of the default profile: `./paddock.sh build`, `build default`, and
+`build latest` all resolve to it. This lets you customize the general-purpose sandbox on your own
+machine without touching a tracked file. Any other profile name is unaffected by the override.
 
 #### Bundled AI Assistants
 The base image installs both `opencode` (`opencode-ai`) and the Gemini CLI (`@google/gemini-cli`)
@@ -76,11 +84,11 @@ globally, alongside the Google Cloud CLI. No build-time selection is required.
 ### 2. Run a Profile
 To run your project inside a sandbox:
 ```bash
-# Run inside the general-purpose "latest" profile sandbox
+# Run inside the general-purpose default profile sandbox
 ./paddock.sh run
 
 # Or run inside a specific custom profile sandbox
-./paddock.sh run latest
+./paddock.sh run default
 ```
 This automatically:
 *   Prepares a persistent local home folder on the host at `~/.local/share/paddock/homes/default`. A single shared home means all profiles reuse the same credentials, shell history, and caches out-of-the-box.

@@ -4,15 +4,17 @@ set -e
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MOCK_BIN="${ROOT_DIR}/mock_bin"
 MOCK_LOG="/tmp/mock_podman.log"
-CONTAINERFILE="${ROOT_DIR}/profiles/latest/Containerfile"
+CONTAINERFILE="${ROOT_DIR}/profiles/default/Containerfile"
 BASE_CONTAINERFILE="${ROOT_DIR}/profiles/base/Containerfile"
+OVERRIDE_CONTAINERFILE="${ROOT_DIR}/profiles/latest/Containerfile"
 BUILD_BASE="podman build -t paddock-base:latest -f ${BASE_CONTAINERFILE} ${ROOT_DIR}"
-BUILD_LATEST="podman build -t paddock:latest -f ${CONTAINERFILE} ${ROOT_DIR}"
+BUILD_DEFAULT="podman build -t paddock:latest -f ${CONTAINERFILE} ${ROOT_DIR}"
+BUILD_OVERRIDE="podman build -t paddock:latest -f ${OVERRIDE_CONTAINERFILE} ${ROOT_DIR}"
 BOTH_IMAGES="paddock-base:latest paddock:latest"
 
 # --- Lint gate ---------------------------------------------------------------
-# Lint before the functional tests. ShellCheck ships in the `latest` profile, so
-# it is always present inside a paddock sandbox. When it is missing the suite
+# Lint before the functional tests. ShellCheck ships in the `default` profile,
+# so it is always present inside a paddock sandbox. When it is missing the suite
 # still runs, but the gate is NOT enforced -- hence the loud SKIP.
 echo "=== Linting shell scripts ==="
 if command -v shellcheck > /dev/null 2>&1; then
@@ -142,13 +144,13 @@ MOCK_IMAGES="" "${ROOT_DIR}/paddock.sh" build base
 assert_log "${BUILD_BASE}" "Missing base is built"
 
 # Test 2: a missing profile is built, a current base is left alone
-echo "Test 2: build latest when only base exists..."
+echo "Test 2: build default when only base exists..."
 reset_log
-MOCK_IMAGES="paddock-base:latest" "${ROOT_DIR}/paddock.sh" build latest
-assert_log "${BUILD_LATEST}" "Missing profile is built"
+MOCK_IMAGES="paddock-base:latest" "${ROOT_DIR}/paddock.sh" build default
+assert_log "${BUILD_DEFAULT}" "Missing profile is built"
 assert_no_log "${BUILD_BASE}" "Current base is not rebuilt"
 
-# Test 3: nothing to do when both images are current (profile defaults to latest)
+# Test 3: nothing to do when both images are current (profile defaults to 'default')
 echo "Test 3: build when everything is current..."
 reset_log
 MOCK_IMAGES="${BOTH_IMAGES}" "${ROOT_DIR}/paddock.sh" build
@@ -157,18 +159,18 @@ assert_no_log "podman build" "Nothing is rebuilt when up to date"
 # Test 4: an out-of-date image is rebuilt, and a stale base cascades
 echo "Test 4: build when the images are older than their Containerfiles..."
 reset_log
-MOCK_IMAGES="${BOTH_IMAGES}" MOCK_IMAGE_EPOCH=0 "${ROOT_DIR}/paddock.sh" build latest
+MOCK_IMAGES="${BOTH_IMAGES}" MOCK_IMAGE_EPOCH=0 "${ROOT_DIR}/paddock.sh" build default
 assert_log "${BUILD_BASE}" "Stale base is rebuilt"
-assert_log "${BUILD_LATEST}" "Stale profile is rebuilt"
+assert_log "${BUILD_DEFAULT}" "Stale profile is rebuilt"
 
 # --- rebuild: always build, ignoring the staleness check ---------------------
 
 # Test 5: rebuild builds both images even though they are current
-echo "Test 5: rebuild latest when everything is current..."
+echo "Test 5: rebuild default when everything is current..."
 reset_log
-MOCK_IMAGES="${BOTH_IMAGES}" "${ROOT_DIR}/paddock.sh" rebuild latest
+MOCK_IMAGES="${BOTH_IMAGES}" "${ROOT_DIR}/paddock.sh" rebuild default
 assert_log "${BUILD_BASE}" "Rebuild forces the base image"
-assert_last_log "${BUILD_LATEST}" "Rebuild builds the profile after its base"
+assert_last_log "${BUILD_DEFAULT}" "Rebuild builds the profile after its base"
 
 # Test 6: rebuilding base alone must not build it twice
 echo "Test 6: rebuild base..."
@@ -184,9 +186,9 @@ echo "PASS: 'rebuild base' builds the base image exactly once"
 # --- run: ensure the image, then delegate to the label -----------------------
 
 # Test 7: run prepares the home directory and delegates to runlabel
-echo "Test 7: run latest..."
+echo "Test 7: run default..."
 reset_log
-MOCK_IMAGES="${BOTH_IMAGES}" "${ROOT_DIR}/paddock.sh" run latest
+MOCK_IMAGES="${BOTH_IMAGES}" "${ROOT_DIR}/paddock.sh" run default
 assert_dir "${DEFAULT_HOME}" "Persistent home folder is created"
 assert_no_log "podman build" "A current image is not rebuilt before running"
 assert_last_log "podman container runlabel run paddock:latest" \
@@ -196,7 +198,7 @@ assert_last_log "podman container runlabel run paddock:latest" \
 echo "Test 8: run rebuilds a stale image before launching..."
 reset_log
 MOCK_IMAGES="${BOTH_IMAGES}" MOCK_IMAGE_EPOCH=0 "${ROOT_DIR}/paddock.sh" run
-assert_log "${BUILD_LATEST}" "Stale image is rebuilt before launching"
+assert_log "${BUILD_DEFAULT}" "Stale image is rebuilt before launching"
 assert_last_log "podman container runlabel run paddock:latest" \
     "Launch still happens after the rebuild"
 
@@ -213,13 +215,49 @@ echo "Test 10: rejecting an unknown profile..."
 assert_fails "'build nosuch' is rejected" env MOCK_IMAGES="${BOTH_IMAGES}" "${ROOT_DIR}/paddock.sh" build nosuch
 assert_fails "'run nosuch' is rejected" env MOCK_IMAGES="${BOTH_IMAGES}" "${ROOT_DIR}/paddock.sh" run nosuch
 
+# --- 'default' resolution: personal override takes precedence over the -------
+# --- shipped profile, but the image tag never changes ------------------------
+
+# Test 11: explicit 'latest' is an ordinary profile name, not an alias of
+# 'default'. Only 'default' gets override-preferring resolution (see
+# containerfile_for() in paddock.sh) -- pinned here so it isn't "simplified"
+# into a second special-cased name later.
+echo "Test 11: 'latest' with no local override behaves like any other unknown profile..."
+assert_fails "'build latest' is rejected when profiles/latest/ does not exist" \
+    env MOCK_IMAGES="${BOTH_IMAGES}" "${ROOT_DIR}/paddock.sh" build latest
+
+# Test 12: a local profiles/latest/Containerfile -- a personal override, never
+# shipped, listed in .gitignore -- is used instead of profiles/default/ for
+# every spelling of the default profile, and still tags as 'paddock:latest'.
+echo "Test 12: a local profiles/latest/ override takes precedence over profiles/default/..."
+mkdir -p "$(dirname "${OVERRIDE_CONTAINERFILE}")"
+echo 'FROM paddock-base:latest' > "${OVERRIDE_CONTAINERFILE}"
+
+reset_log
+MOCK_IMAGES="paddock-base:latest" "${ROOT_DIR}/paddock.sh" build
+assert_log "${BUILD_OVERRIDE}" "Bare 'build' uses the override, not profiles/default/"
+assert_no_log "${BUILD_DEFAULT}" "profiles/default/Containerfile is not built while overridden"
+
+reset_log
+MOCK_IMAGES="paddock-base:latest" "${ROOT_DIR}/paddock.sh" build latest
+assert_log "${BUILD_OVERRIDE}" "Explicit 'build latest' resolves to the same override"
+
+# The override must be scoped to the name "default" only -- any other profile,
+# 'base' included, must ignore it even while it exists on disk.
+reset_log
+MOCK_IMAGES="" "${ROOT_DIR}/paddock.sh" build base
+assert_log "${BUILD_BASE}" "'build base' ignores an active profiles/latest/ override"
+
+rm -rf "$(dirname "${OVERRIDE_CONTAINERFILE}")"
+echo "PASS: 'default' resolution and tag naming verified with an active override"
+
 # --- the label is the only definition of the sandbox -------------------------
 
-# Test 11: paddock.sh delegates every mount and security flag to `LABEL run`, so
+# Test 13: paddock.sh delegates every mount and security flag to `LABEL run`, so
 # the mock cannot observe them. Assert the non-negotiable controls are present.
 # Tunables (sizes, counts) are deliberately NOT pinned, only that the control
 # exists, so limits can be retuned without touching this suite.
-echo "Test 11: verifying security invariants in 'LABEL run'..."
+echo "Test 13: verifying security invariants in 'LABEL run'..."
 LABEL="$(label_run)"
 if [ -z "${LABEL}" ]; then
     echo "FAIL: Could not extract 'LABEL run' from ${CONTAINERFILE}"

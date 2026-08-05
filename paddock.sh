@@ -14,7 +14,23 @@ command -v podman >/dev/null 2>&1 || error "Podman is required but not installed
 
 # image_tag <profile> -- the image name a profile builds to.
 image_tag() {
-    if [ "$1" = "base" ]; then echo "paddock-base:latest"; else echo "paddock:$1"; fi
+    case "$1" in
+        base) echo "paddock-base:latest" ;;
+        default) echo "paddock:latest" ;;
+        *) echo "paddock:$1" ;;
+    esac
+}
+
+# containerfile_for <profile> -- the Containerfile that backs a profile name.
+# "default" is special: a personal, untracked profiles/latest/Containerfile
+# (see .gitignore) takes precedence over the shipped profiles/default/
+# Containerfile when present. Every other name maps to its own directory.
+containerfile_for() {
+    if [ "$1" = "default" ] && [ -f "${PROFILES_DIR}/latest/Containerfile" ]; then
+        echo "${PROFILES_DIR}/latest/Containerfile"
+    else
+        echo "${PROFILES_DIR}/$1/Containerfile"
+    fi
 }
 
 # image_epoch <tag> -- image creation time in seconds since the epoch, 0 if unknown.
@@ -37,8 +53,9 @@ newest_epoch() {
 
 # assert_profile <profile> -- abort unless the profile has a Containerfile.
 assert_profile() {
-    [ -f "${PROFILES_DIR}/$1/Containerfile" ] \
-        || error "Profile '$1' not found at ${PROFILES_DIR}/$1/Containerfile"
+    local cf
+    cf="$(containerfile_for "$1")"
+    [ -f "${cf}" ] || error "Profile '$1' not found at ${cf}"
 }
 
 # build_profile <profile>
@@ -46,12 +63,13 @@ assert_profile() {
 # unknown profile is rejected. Dependency ordering is the caller's job, so that
 # base is refreshed exactly once per invocation.
 build_profile() {
-    local profile="$1" tag
+    local profile="$1" tag cf
     assert_profile "${profile}"
     tag="$(image_tag "${profile}")"
+    cf="$(containerfile_for "${profile}")"
 
     info "Building image '${tag}'..."
-    podman build -t "${tag}" -f "${PROFILES_DIR}/${profile}/Containerfile" "${ROOT_DIR}"
+    podman build -t "${tag}" -f "${cf}" "${ROOT_DIR}"
 }
 
 # ensure_image <profile>
@@ -59,8 +77,13 @@ build_profile() {
 # security flag lives in the image's `LABEL run`, so an out-of-date image would
 # otherwise keep silently applying the previous limits.
 ensure_image() {
-    local profile="$1" tag reason="" built inputs
+    local profile="$1" tag cf reason="" built inputs
+    # Validate the profile even if its image already exists and is current:
+    # "default" and "latest" can resolve to the same tag (paddock:latest), so
+    # an existing tag does not by itself prove the requested name is real.
+    assert_profile "${profile}"
     tag="$(image_tag "${profile}")"
+    cf="$(containerfile_for "${profile}")"
 
     # A profile is built FROM the base image, so bring that up to date first.
     if [ "${profile}" != "base" ]; then
@@ -71,9 +94,7 @@ ensure_image() {
         reason="is missing"
     else
         built="$(image_epoch "${tag}")"
-        inputs="$(newest_epoch \
-            "${PROFILES_DIR}/${profile}/Containerfile" \
-            "${PROFILES_DIR}/${profile}/entrypoint.sh")"
+        inputs="$(newest_epoch "${cf}" "$(dirname "${cf}")/entrypoint.sh")"
         if [ "${inputs}" -gt "${built}" ]; then
             reason="is older than its Containerfile"
         elif [ "${profile}" != "base" ] && [ "$(image_epoch "$(image_tag base)")" -gt "${built}" ]; then
@@ -98,8 +119,8 @@ rebuild_profile() {
 }
 
 run_profile() {
-    local profile="$1"
-    local tag="paddock:${profile}"
+    local profile="$1" tag
+    tag="$(image_tag "${profile}")"
 
     # `base` is an abstract parent image; it carries no `LABEL run` and is not
     # meant to be entered directly.
@@ -125,14 +146,18 @@ run_profile() {
 
 # Main routing
 ACTION="$1"
-PROFILE="${2:-latest}"
+PROFILE="${2:-default}"
 
 if [ -z "${ACTION}" ] || [ "${ACTION}" = "help" ] || [ "${ACTION}" = "--help" ] || [ "${ACTION}" = "-h" ]; then
-    echo "Usage: $0 {build|rebuild|run} [profile]   (profile defaults to 'latest')"
+    echo "Usage: $0 {build|rebuild|run} [profile]   (profile defaults to 'default')"
     echo "Examples:"
     echo "  $0 build            # Build the profile if it is missing or out of date"
     echo "  $0 rebuild base     # Force a rebuild, ignoring the staleness check"
     echo "  $0 run              # Build if needed, then launch the sandbox"
+    echo
+    echo "'default' always builds/runs as tag 'paddock:latest'. It resolves to"
+    echo "profiles/latest/Containerfile if you have created one locally"
+    echo "(a personal override, not shipped), otherwise profiles/default/Containerfile."
     exit 1
 fi
 
