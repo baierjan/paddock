@@ -20,7 +20,7 @@ echo "=== Linting shell scripts ==="
 if command -v shellcheck > /dev/null 2>&1; then
     mapfile -t SHELL_SCRIPTS < <(find "${ROOT_DIR}" -name '*.sh' -not -path '*/mock_*' | sort)
     if ! shellcheck "${SHELL_SCRIPTS[@]}"; then
-        echo "FAIL: shellcheck reported issues"
+        echo "FAIL: shellcheck reported issues" >&2
         exit 1
     fi
     echo "PASS: shellcheck clean (${#SHELL_SCRIPTS[@]} scripts)"
@@ -84,8 +84,8 @@ label_run() {
 # assert_log <fixed-substring> <description>
 assert_log() {
     if ! grep -qF "$1" "${MOCK_LOG}"; then
-        echo "FAIL: $2"
-        cat "${MOCK_LOG}"
+        echo "FAIL: $2" >&2
+        cat "${MOCK_LOG}" >&2
         exit 1
     fi
     echo "PASS: $2"
@@ -94,8 +94,8 @@ assert_log() {
 # assert_no_log <fixed-substring> <description>
 assert_no_log() {
     if grep -qF "$1" "${MOCK_LOG}"; then
-        echo "FAIL: $2"
-        cat "${MOCK_LOG}"
+        echo "FAIL: $2" >&2
+        cat "${MOCK_LOG}" >&2
         exit 1
     fi
     echo "PASS: $2"
@@ -106,9 +106,9 @@ assert_last_log() {
     local actual
     actual="$(tail -n 1 "${MOCK_LOG}")"
     if [ "${actual}" != "$1" ]; then
-        echo "FAIL: $2"
-        echo "  expected: $1"
-        echo "  actual  : ${actual}"
+        echo "FAIL: $2" >&2
+        echo "  expected: $1" >&2
+        echo "  actual  : ${actual}" >&2
         exit 1
     fi
     echo "PASS: $2"
@@ -117,7 +117,7 @@ assert_last_log() {
 # assert_dir <path> <description>
 assert_dir() {
     if [ ! -d "$1" ]; then
-        echo "FAIL: $2 (missing $1)"
+        echo "FAIL: $2 (missing $1)" >&2
         exit 1
     fi
     echo "PASS: $2"
@@ -127,7 +127,7 @@ assert_dir() {
 assert_fails() {
     local desc="$1"; shift
     if "$@" > /dev/null 2>&1; then
-        echo "FAIL: ${desc}"
+        echo "FAIL: ${desc}" >&2
         exit 1
     fi
     echo "PASS: ${desc}"
@@ -177,8 +177,8 @@ echo "Test 6: rebuild base..."
 reset_log
 MOCK_IMAGES="${BOTH_IMAGES}" "${ROOT_DIR}/paddock.sh" rebuild base
 if [ "$(grep -c "^${BUILD_BASE}$" "${MOCK_LOG}")" != "1" ]; then
-    echo "FAIL: 'rebuild base' should build the base image exactly once"
-    cat "${MOCK_LOG}"
+    echo "FAIL: 'rebuild base' should build the base image exactly once" >&2
+    cat "${MOCK_LOG}" >&2
     exit 1
 fi
 echo "PASS: 'rebuild base' builds the base image exactly once"
@@ -260,7 +260,7 @@ echo "PASS: 'default' resolution and tag naming verified with an active override
 echo "Test 13: verifying security invariants in 'LABEL run'..."
 LABEL="$(label_run)"
 if [ -z "${LABEL}" ]; then
-    echo "FAIL: Could not extract 'LABEL run' from ${CONTAINERFILE}"
+    echo "FAIL: Could not extract 'LABEL run' from ${CONTAINERFILE}" >&2
     exit 1
 fi
 # The `$HOME`/`$PWD` below are literal: the label stores them unexpanded and
@@ -285,8 +285,8 @@ do
     case "${LABEL}" in
         *"${flag}"*) ;;
         *)
-            echo "FAIL: 'LABEL run' is missing required flag: ${flag}"
-            echo "  label: ${LABEL}"
+            echo "FAIL: 'LABEL run' is missing required flag: ${flag}" >&2
+            echo "  label: ${LABEL}" >&2
             exit 1
             ;;
     esac
