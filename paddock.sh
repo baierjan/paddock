@@ -43,7 +43,11 @@ newest_epoch() {
     local newest=0 mtime file
     for file in "$@"; do
         [ -f "${file}" ] || continue
-        mtime="$(stat -c %Y "${file}" 2>/dev/null || echo 0)"
+        if stat --version 2>/dev/null | grep -q "GNU"; then
+            mtime="$(stat -c %Y "${file}" 2>/dev/null || echo 0)"
+        else
+            mtime="$(stat -f %m "${file}" 2>/dev/null || echo 0)"
+        fi
         if [ "${mtime}" -gt "${newest}" ]; then
             newest="${mtime}"
         fi
