@@ -1,4 +1,10 @@
-# Paddock
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-header-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/logo-header-light.png">
+    <img alt="Paddock" src="docs/logo-header-light.png">
+  </picture>
+</p>
 
 **Paddock** is a secure, lightweight, project-specific sandboxed runtime container environment designed to run AI coding assistants (such as OpenCode, Gemini CLI, and Claude Code) in complete, virtualized isolation from your host system.
 

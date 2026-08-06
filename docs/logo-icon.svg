@@ -1,0 +1,38 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Paddock icon">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0e12"/>
+      <stop offset="100%" stop-color="#121a1f"/>
+    </linearGradient>
+  </defs>
+  <rect x="40" y="40" width="432" height="432" rx="96" fill="url(#bgGrad)"/>
+  <rect x="42" y="42" width="428" height="428" rx="94" fill="none" stroke="#22c55e" stroke-opacity="0.45" stroke-width="4"/>
+
+  <!-- Fence enclosure: 4 rails -->
+  <rect x="106" y="104.5" width="300" height="3" fill="#22c55e" opacity="0.55"/>
+  <rect x="106" y="404.5" width="300" height="3" fill="#22c55e" opacity="0.55"/>
+  <rect x="104.5" y="106" width="3" height="300" fill="#22c55e" opacity="0.55"/>
+  <rect x="404.5" y="106" width="3" height="300" fill="#22c55e" opacity="0.55"/>
+
+  <!-- Corner posts -->
+  <rect x="101" y="101" width="10" height="10" fill="#22c55e" opacity="0.6"/>
+  <rect x="401" y="101" width="10" height="10" fill="#22c55e" opacity="0.6"/>
+  <rect x="101" y="401" width="10" height="10" fill="#22c55e" opacity="0.6"/>
+  <rect x="401" y="401" width="10" height="10" fill="#22c55e" opacity="0.6"/>
+
+  <!-- Interior posts: 3 evenly spaced per side, between the corner posts -->
+  <rect x="177" y="94" width="8" height="24" fill="#22c55e" opacity="0.6"/>
+  <rect x="252" y="94" width="8" height="24" fill="#22c55e" opacity="0.6"/>
+  <rect x="327" y="94" width="8" height="24" fill="#22c55e" opacity="0.6"/>
+  <rect x="177" y="394" width="8" height="24" fill="#22c55e" opacity="0.6"/>
+  <rect x="252" y="394" width="8" height="24" fill="#22c55e" opacity="0.6"/>
+  <rect x="327" y="394" width="8" height="24" fill="#22c55e" opacity="0.6"/>
+  <rect x="94" y="177" width="24" height="8" fill="#22c55e" opacity="0.6"/>
+  <rect x="94" y="252" width="24" height="8" fill="#22c55e" opacity="0.6"/>
+  <rect x="94" y="327" width="24" height="8" fill="#22c55e" opacity="0.6"/>
+  <rect x="394" y="177" width="24" height="8" fill="#22c55e" opacity="0.6"/>
+  <rect x="394" y="252" width="24" height="8" fill="#22c55e" opacity="0.6"/>
+  <rect x="394" y="327" width="24" height="8" fill="#22c55e" opacity="0.6"/>
+
+  <text x="256" y="310" text-anchor="middle" font-family="IosevkaTerm Nerd Font, Fira Code, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="170" font-weight="700" fill="#22c55e">&gt;</text>
+</svg>

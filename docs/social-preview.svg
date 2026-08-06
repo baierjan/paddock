@@ -1,0 +1,78 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Paddock: hardened microVM sandbox for AI coding CLIs">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0e12"/>
+      <stop offset="100%" stop-color="#121a1f"/>
+    </linearGradient>
+    <clipPath id="winClip">
+      <rect x="660" y="140" width="520" height="360" rx="14"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="1280" height="640" fill="url(#bgGrad)"/>
+
+  <!-- Fence-post motif along the bottom edge -->
+  <rect x="60" y="609" width="1160" height="2" fill="#22c55e" opacity="0.35"/>
+  <rect x="68" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="128" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="188" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="248" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="308" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="368" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="428" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="488" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="548" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="608" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="668" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="728" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="788" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="848" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="908" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="968" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="1028" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="1088" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="1148" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+  <rect x="1208" y="598" width="4" height="24" fill="#22c55e" opacity="0.28"/>
+
+  <!-- Left column: wordmark, tagline, tech labels -->
+  <text x="80" y="270" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="72" font-weight="700" fill="#22c55e">&gt;</text>
+  <text x="150" y="270" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="80" font-weight="700" fill="#f0f6fc">Paddock</text>
+
+  <text x="82" y="326" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="28" fill="#9aa4ae">Hardened microVM sandbox</text>
+  <text x="82" y="362" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="28" fill="#9aa4ae">for AI coding CLIs</text>
+
+  <text x="82" y="420" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="20" letter-spacing="1"><tspan fill="#6b8f75">podman</tspan><tspan fill="#22c55e" opacity="0.6"> &#183; </tspan><tspan fill="#6b8f75">krun</tspan><tspan fill="#22c55e" opacity="0.6"> &#183; </tspan><tspan fill="#6b8f75">pasta</tspan></text>
+
+  <!-- Right column: terminal window -->
+  <rect x="655" y="135" width="530" height="370" rx="16" fill="#22c55e" opacity="0.10"/>
+
+  <g clip-path="url(#winClip)">
+    <rect x="660" y="140" width="520" height="360" fill="#0d1117"/>
+    <rect x="660" y="140" width="520" height="40" fill="#151b21"/>
+    <rect x="660" y="179" width="520" height="1" fill="#22c55e" opacity="0.25"/>
+
+    <text x="680" y="165" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="15" font-weight="700" fill="#22c55e">&gt;_</text>
+    <text x="706" y="165" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="14" fill="#6e7681">ai@paddock:~/sandbox</text>
+
+    <text x="684" y="222" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="21">
+      <tspan fill="#22c55e">$</tspan><tspan fill="#e6edf3"> paddock.sh run</tspan>
+    </text>
+    <text x="684" y="262" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="21">
+      <tspan fill="#22c55e">[INFO]</tspan><tspan fill="#9aa4ae"> Launching profile 'default'...</tspan>
+    </text>
+    <text x="684" y="302" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="21">
+      <tspan fill="#22c55e">[INFO]</tspan><tspan fill="#9aa4ae"> Workspace -&gt; /home/ai/sandbox</tspan>
+    </text>
+    <text x="684" y="342" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="21">
+      <tspan fill="#22c55e">[ OK ]</tspan><tspan fill="#e6edf3"> Isolated in a hardened microVM</tspan>
+    </text>
+    <text x="684" y="396" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="21" font-weight="700" fill="#38bdf8">~/sandbox</text>
+    <text x="684" y="436" font-family="IosevkaTerm Nerd Font, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace" font-size="21" font-weight="700">
+      <tspan fill="#f87171">&#11042; [podman]</tspan><tspan fill="#22c55e"> &#10095;</tspan>
+    </text>
+    <rect x="818" y="422" width="12" height="20" fill="#22c55e"/>
+  </g>
+
+  <rect x="660.5" y="140.5" width="519" height="359" rx="14" fill="none" stroke="#22c55e" stroke-opacity="0.35" stroke-width="1"/>
+</svg>
