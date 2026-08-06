@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 # Capture original working directory
 ORIG_PWD="$(pwd)"
