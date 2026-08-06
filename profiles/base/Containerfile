@@ -35,10 +35,15 @@ RUN zypper --non-interactive refresh && \
 
 # 2. Install AI CLI assistants and the Google Cloud CLI globally.
 # NOTE: the cloud-sdk repo is x86_64-only, so this image is x86_64-only.
-RUN curl -fsSL -o /tmp/gemini-cli.tgz https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-0.54.0.tgz && \
-    echo "3a56deaf930ad75e98858cdd4a7b77a3b3769cda3910604c405011049c0a183d2c803f2e82f1073b313bb2f10fbc204b6a4a15ba36c0a0c2bdc63b2c436184d2  /tmp/gemini-cli.tgz" | sha512sum -c - && \
-    curl -fsSL -o /tmp/opencode-ai.tgz https://registry.npmjs.org/opencode-ai/-/opencode-ai-1.18.14.tgz && \
-    echo "139b289fc110921f9c4376d891e182392353731f309a0b07059ddb263634ace03ce096916f756faa47d3e3503c0a1804cf06d235eeeecc41c32aa24e90d3329d  /tmp/opencode-ai.tgz" | sha512sum -c - && \
+ARG GEMINI_CLI_VER=0.54.0
+ARG GEMINI_CLI_HASH=3a56deaf930ad75e98858cdd4a7d3f50f368deb6f18f80891204810112042f02859b5347189e0573b90c8ef10f3cbb718a9d00922f3150cdbc1c6e2c436184d2
+ARG OPENCODE_AI_VER=1.18.14
+ARG OPENCODE_AI_HASH=139b289fc110921f9c4376d891e182392353731f309a0b07059ddb263634ace03ce096916f756faa47d3e3503c0a1804cf06d235eeeecc41c32aa24e90d3329d
+
+RUN curl -fsSL -o /tmp/gemini-cli.tgz https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-${GEMINI_CLI_VER}.tgz && \
+    echo "${GEMINI_CLI_HASH}  /tmp/gemini-cli.tgz" | sha512sum -c - && \
+    curl -fsSL -o /tmp/opencode-ai.tgz https://registry.npmjs.org/opencode-ai/-/opencode-ai-${OPENCODE_AI_VER}.tgz && \
+    echo "${OPENCODE_AI_HASH}  /tmp/opencode-ai.tgz" | sha512sum -c - && \
     npm install -g /tmp/gemini-cli.tgz /tmp/opencode-ai.tgz && \
     rm -f /tmp/gemini-cli.tgz /tmp/opencode-ai.tgz && \
     npm cache clean --force && \

@@ -148,16 +148,88 @@ run_profile() {
     podman container runlabel run "${tag}"
 }
 
+# upgrade_assistants
+# Sniffs latest stable release versions from the NPM registry,
+# converts their SHA-512 Base64 hashes into Hex format, and updates
+# profiles/base/Containerfile if newer versions are available.
+upgrade_assistants() {
+    local cf="${PROFILES_DIR}/base/Containerfile"
+    [ -f "${cf}" ] || error "Base Containerfile not found at ${cf}"
+
+    # Verify required host tools
+    command -v curl >/dev/null 2>&1 || error "curl is required on the host for upgrades."
+    command -v jq >/dev/null 2>&1 || error "jq is required on the host for upgrades."
+    command -v openssl >/dev/null 2>&1 || error "openssl is required on the host for upgrades."
+
+    # Parse current values from Containerfile
+    local curr_gemini_ver; curr_gemini_ver="$(grep "ARG GEMINI_CLI_VER=" "${cf}" | cut -d= -f2)"
+    local curr_opencode_ver; curr_opencode_ver="$(grep "ARG OPENCODE_AI_VER=" "${cf}" | cut -d= -f2)"
+
+    info "Checking for upgrades..."
+    info "Current @google/gemini-cli: ${curr_gemini_ver}"
+    info "Current opencode-ai: ${curr_opencode_ver}"
+
+    # Query latest stable versions and metadata
+    local gemini_json; gemini_json="$(curl -fsSL https://registry.npmjs.org/@google/gemini-cli/latest)"
+    local opencode_json; opencode_json="$(curl -fsSL https://registry.npmjs.org/opencode-ai/latest)"
+
+    local latest_gemini_ver; latest_gemini_ver="$(echo "${gemini_json}" | jq -r .version)"
+    local latest_opencode_ver; latest_opencode_ver="$(echo "${opencode_json}" | jq -r .version)"
+
+    local needs_update=0
+    local new_gemini_ver="${curr_gemini_ver}"
+    local new_gemini_hash; new_gemini_hash="$(grep "ARG GEMINI_CLI_HASH=" "${cf}" | cut -d= -f2)"
+    local new_opencode_ver="${curr_opencode_ver}"
+    local new_opencode_hash; new_opencode_hash="$(grep "ARG OPENCODE_AI_HASH=" "${cf}" | cut -d= -f2)"
+
+    # Handle Gemini CLI Upgrade
+    if [ "${latest_gemini_ver}" != "${curr_gemini_ver}" ]; then
+        info "New @google/gemini-cli version found: ${latest_gemini_ver}"
+        local gemini_integrity; gemini_integrity="$(echo "${gemini_json}" | jq -r .dist.integrity)"
+        local gemini_b64="${gemini_integrity#sha512-}"
+        new_gemini_ver="${latest_gemini_ver}"
+        new_gemini_hash="$(echo -n "${gemini_b64}" | openssl enc -base64 -d -A | od -An -tx1 | tr -d ' \n')"
+        needs_update=1
+    fi
+
+    # Handle OpenCode AI Upgrade
+    if [ "${latest_opencode_ver}" != "${curr_opencode_ver}" ]; then
+        info "New opencode-ai version found: ${latest_opencode_ver}"
+        local opencode_integrity; opencode_integrity="$(echo "${opencode_json}" | jq -r .dist.integrity)"
+        local opencode_b64="${opencode_integrity#sha512-}"
+        new_opencode_ver="${latest_opencode_ver}"
+        new_opencode_hash="$(echo -n "${opencode_b64}" | openssl enc -base64 -d -A | od -An -tx1 | tr -d ' \n')"
+        needs_update=1
+    fi
+
+    if [ "${needs_update}" -eq 1 ]; then
+        info "Updating ${cf}..."
+        sed \
+          -e "s/ARG GEMINI_CLI_VER=.*/ARG GEMINI_CLI_VER=${new_gemini_ver}/" \
+          -e "s/ARG GEMINI_CLI_HASH=.*/ARG GEMINI_CLI_HASH=${new_gemini_hash}/" \
+          -e "s/ARG OPENCODE_AI_VER=.*/ARG OPENCODE_AI_VER=${new_opencode_ver}/" \
+          -e "s/ARG OPENCODE_AI_HASH=.*/ARG OPENCODE_AI_HASH=${new_opencode_hash}/" \
+          "${cf}" > "${cf}.tmp" && mv "${cf}.tmp" "${cf}"
+
+        info "Successfully upgraded assistants in Containerfile!"
+        info "To apply these changes, rebuild your base image using:"
+        info "  ./paddock.sh rebuild base"
+    else
+        info "All AI assistants are already up to date!"
+    fi
+}
+
 # Main routing
 ACTION="$1"
 PROFILE="${2:-default}"
 
 if [ -z "${ACTION}" ] || [ "${ACTION}" = "help" ] || [ "${ACTION}" = "--help" ] || [ "${ACTION}" = "-h" ]; then
-    echo "Usage: $0 {build|rebuild|run} [profile]   (profile defaults to 'default')"
+    echo "Usage: $0 {build|rebuild|run|upgrade} [profile]   (profile defaults to 'default')"
     echo "Examples:"
     echo "  $0 build            # Build the profile if it is missing or out of date"
     echo "  $0 rebuild base     # Force a rebuild, ignoring the staleness check"
     echo "  $0 run              # Build if needed, then launch the sandbox"
+    echo "  $0 upgrade          # Fetch latest assistants and update hashes"
     echo
     echo "'default' always builds/runs as tag 'paddock:latest'. It resolves to"
     echo "profiles/latest/Containerfile if you have created one locally"
@@ -175,7 +247,10 @@ case "${ACTION}" in
     run)
         run_profile "${PROFILE}"
         ;;
+    upgrade)
+        upgrade_assistants
+        ;;
     *)
-        error "Unknown action '${ACTION}'. Use 'build', 'rebuild' or 'run'."
+        error "Unknown action '${ACTION}'. Use 'build', 'rebuild', 'run' or 'upgrade'."
         ;;
 esac

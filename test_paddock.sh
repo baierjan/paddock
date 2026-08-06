@@ -53,6 +53,22 @@ fi
 EOF
 chmod +x "${MOCK_BIN}/podman"
 
+# Create mock curl command to simulate offline NPM registry responses
+cat << 'EOF' > "${MOCK_BIN}/curl"
+#!/bin/bash
+# Check which package's latest metadata is requested
+if [[ "$*" == *"@google/gemini-cli/latest"* ]]; then
+    # Return simulated payload with an upgraded mock version 0.55.0
+    echo '{"version":"0.55.0","dist":{"tarball":"https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-0.55.0.tgz","integrity":"sha512-Olber5MK116YhYzdSn0/UPNo3rbxj4CJEgSBARIELwKFm1NHGJ4Fc7kMjvEPPLtxip0Aki8xUM28HG4sQ2GE0g=="}}'
+elif [[ "$*" == *"opencode-ai/latest"* ]]; then
+    # Return simulated payload with an up-to-date version matching current (1.18.14)
+    echo '{"version":"1.18.14","dist":{"tarball":"https://registry.npmjs.org/opencode-ai/-/opencode-ai-1.18.14.tgz","integrity":"sha512-E5son8EQkh+cQ3bYkeGCOSNTcx8wmgsHBZ3bJjY0rOA84JaRb3VvqkfT41A8ChgEzwbSNe7uzEHDKqJOkNMynQ=="}}'
+else
+    /usr/bin/curl "$@"
+fi
+EOF
+chmod +x "${MOCK_BIN}/curl"
+
 export PATH="${MOCK_BIN}:${PATH}"
 
 # Ensure XDG variables are unset for deterministic test paths
@@ -292,6 +308,30 @@ do
     esac
 done
 echo "PASS: 'LABEL run' contains all required security flags"
+
+# Test 14: upgrade updates base Containerfile build variables safely
+echo "Test 14: upgrade assistants..."
+# Create a backup of Containerfile
+cp "${BASE_CONTAINERFILE}" "${BASE_CONTAINERFILE}.bak"
+
+# Run upgrade (will trigger upgrade for gemini-cli to 0.55.0, opencode stays at 1.18.14)
+"${ROOT_DIR}/paddock.sh" upgrade
+
+# Assert the Containerfile variables are correctly updated
+if ! grep -q "ARG GEMINI_CLI_VER=0.55.0" "${BASE_CONTAINERFILE}"; then
+    echo "FAIL: GEMINI_CLI_VER was not updated to 0.55.0" >&2
+    mv "${BASE_CONTAINERFILE}.bak" "${BASE_CONTAINERFILE}"
+    exit 1
+fi
+if ! grep -q "ARG OPENCODE_AI_VER=1.18.14" "${BASE_CONTAINERFILE}"; then
+    echo "FAIL: OPENCODE_AI_VER was altered from 1.18.14" >&2
+    mv "${BASE_CONTAINERFILE}.bak" "${BASE_CONTAINERFILE}"
+    exit 1
+fi
+
+# Restore backup
+mv "${BASE_CONTAINERFILE}.bak" "${BASE_CONTAINERFILE}"
+echo "PASS: upgrade successfully updates Containerfile parameters"
 
 echo "=== All Paddock Tests Passed Successfully ==="
 

@@ -6,6 +6,20 @@ Unlike complex multi-bind sandboxes, Paddock utilizes a **Pure Containerfile Lay
 
 ---
 
+## Prerequisites & Requirements
+
+### Host Environment for Sandboxing (`run`)
+*   **Linux Host** with KVM support (microVM sandboxing is Linux-only).
+*   Rootless **Podman** container engine.
+*   The **`krun`** container runtime (or `libkrun`) and the **`pasta`** network isolator.
+
+### Host Environment for Automatic Upgrades (`upgrade`)
+*   **`curl`**: Used to query latest stable version metadata from the NPM registry.
+*   **`jq`**: Used to parse JSON payloads.
+*   **`openssl`**: Used for portable, cross-platform Base64-to-Hex conversions of registry integrity hashes.
+
+---
+
 ## Key Features
 
 1.  **Simple Command Interface:** A single, easily-remembered shell command `./paddock.sh` (or native `podman container runlabel`) to build and run sandboxes.
