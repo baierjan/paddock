@@ -11,8 +11,13 @@ RUN zypper --non-interactive refresh && \
         glibc-locale \
         kitty-terminfo \
         make \
+        openssl \
+        osc \
         perl \
         python3-yamllint \
+        rpm-build \
+        rpmlint \
+        spec-cleaner \
         vim \
     && zypper clean --all \
     && rm -rf /var/cache/zypp/* /tmp/* /var/tmp/*
