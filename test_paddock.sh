@@ -6,10 +6,8 @@ MOCK_BIN="${ROOT_DIR}/mock_bin"
 MOCK_LOG="/tmp/mock_podman.log"
 CONTAINERFILE="${ROOT_DIR}/profiles/default/Containerfile"
 BASE_CONTAINERFILE="${ROOT_DIR}/profiles/base/Containerfile"
-OVERRIDE_CONTAINERFILE="${ROOT_DIR}/profiles/latest/Containerfile"
 BUILD_BASE="podman build -t paddock-base:latest -f ${BASE_CONTAINERFILE} ${ROOT_DIR}"
 BUILD_DEFAULT="podman build -t paddock:latest -f ${CONTAINERFILE} ${ROOT_DIR}"
-BUILD_OVERRIDE="podman build -t paddock:latest -f ${OVERRIDE_CONTAINERFILE} ${ROOT_DIR}"
 BOTH_IMAGES="paddock-base:latest paddock:latest"
 
 # --- Lint gate ---------------------------------------------------------------
@@ -80,6 +78,7 @@ export HOME="${ROOT_DIR}/mock_home"
 rm -rf "${HOME}"
 mkdir -p "${HOME}"
 DEFAULT_HOME="${HOME}/.local/share/paddock/homes/default"
+OVERRIDE_ROOT="${HOME}/.local/share/paddock/profiles"
 
 # --- Helpers -----------------------------------------------------------------
 
@@ -231,41 +230,51 @@ echo "Test 10: rejecting an unknown profile..."
 assert_fails "'build nosuch' is rejected" env MOCK_IMAGES="${BOTH_IMAGES}" "${ROOT_DIR}/paddock.sh" build nosuch
 assert_fails "'run nosuch' is rejected" env MOCK_IMAGES="${BOTH_IMAGES}" "${ROOT_DIR}/paddock.sh" run nosuch
 
-# --- 'default' resolution: personal override takes precedence over the -------
-# --- shipped profile, but the image tag never changes ------------------------
+# --- personal overrides: ~/.local/share/paddock/profiles/<name>/ takes -------
+# --- precedence over the shipped profiles/<name>/, per profile, but the ------
+# --- image tag never changes --------------------------------------------
 
-# Test 11: explicit 'latest' is an ordinary profile name, not an alias of
-# 'default'. Only 'default' gets override-preferring resolution (see
-# containerfile_for() in paddock.sh) -- pinned here so it isn't "simplified"
-# into a second special-cased name later.
-echo "Test 11: 'latest' with no local override behaves like any other unknown profile..."
-assert_fails "'build latest' is rejected when profiles/latest/ does not exist" \
-    env MOCK_IMAGES="${BOTH_IMAGES}" "${ROOT_DIR}/paddock.sh" build latest
+# Test 11: an unrelated profile name is unaffected by an override that exists
+# for a different profile -- overrides are keyed by the real profile name,
+# with no shared special case between them.
+echo "Test 11: an override for one profile does not leak into another..."
+mkdir -p "${OVERRIDE_ROOT}/default"
+echo 'FROM paddock-base:latest' > "${OVERRIDE_ROOT}/default/Containerfile"
+reset_log
+MOCK_IMAGES="" "${ROOT_DIR}/paddock.sh" build base
+assert_log "${BUILD_BASE}" "'build base' ignores an active override for 'default'"
+rm -rf "${OVERRIDE_ROOT}/default"
 
-# Test 12: a local profiles/latest/Containerfile -- a personal override, never
-# shipped, listed in .gitignore -- is used instead of profiles/default/ for
-# every spelling of the default profile, and still tags as 'paddock:latest'.
-echo "Test 12: a local profiles/latest/ override takes precedence over profiles/default/..."
-mkdir -p "$(dirname "${OVERRIDE_CONTAINERFILE}")"
-echo 'FROM paddock-base:latest' > "${OVERRIDE_CONTAINERFILE}"
+# Test 12: a personal override at ~/.local/share/paddock/profiles/<name>/ --
+# never shipped, machine-local -- is used instead of the shipped
+# profiles/<name>/Containerfile, and still resolves to the same image tag.
+echo "Test 12: a personal override takes precedence over the shipped profile..."
+OVERRIDE_DEFAULT="${OVERRIDE_ROOT}/default/Containerfile"
+BUILD_OVERRIDE_DEFAULT="podman build -t paddock:latest -f ${OVERRIDE_DEFAULT} ${ROOT_DIR}"
+mkdir -p "$(dirname "${OVERRIDE_DEFAULT}")"
+echo 'FROM paddock-base:latest' > "${OVERRIDE_DEFAULT}"
 
 reset_log
 MOCK_IMAGES="paddock-base:latest" "${ROOT_DIR}/paddock.sh" build
-assert_log "${BUILD_OVERRIDE}" "Bare 'build' uses the override, not profiles/default/"
+assert_log "${BUILD_OVERRIDE_DEFAULT}" "'build default' uses the override, not profiles/default/"
 assert_no_log "${BUILD_DEFAULT}" "profiles/default/Containerfile is not built while overridden"
 
-reset_log
-MOCK_IMAGES="paddock-base:latest" "${ROOT_DIR}/paddock.sh" build latest
-assert_log "${BUILD_OVERRIDE}" "Explicit 'build latest' resolves to the same override"
+rm -rf "${OVERRIDE_ROOT}/default"
 
-# The override must be scoped to the name "default" only -- any other profile,
-# 'base' included, must ignore it even while it exists on disk.
+# The mechanism is not special-cased to 'default': overriding 'base' works the
+# same way, keyed by the real profile name.
+OVERRIDE_BASE="${OVERRIDE_ROOT}/base/Containerfile"
+BUILD_OVERRIDE_BASE="podman build -t paddock-base:latest -f ${OVERRIDE_BASE} ${ROOT_DIR}"
+mkdir -p "$(dirname "${OVERRIDE_BASE}")"
+echo 'FROM opensuse/tumbleweed' > "${OVERRIDE_BASE}"
+
 reset_log
 MOCK_IMAGES="" "${ROOT_DIR}/paddock.sh" build base
-assert_log "${BUILD_BASE}" "'build base' ignores an active profiles/latest/ override"
+assert_log "${BUILD_OVERRIDE_BASE}" "'build base' uses its own override the same way"
+assert_no_log "${BUILD_BASE}" "profiles/base/Containerfile is not built while overridden"
 
-rm -rf "$(dirname "${OVERRIDE_CONTAINERFILE}")"
-echo "PASS: 'default' resolution and tag naming verified with an active override"
+rm -rf "${OVERRIDE_ROOT}/base"
+echo "PASS: personal overrides resolve per-profile and preserve tag naming"
 
 # --- the label is the only definition of the sandbox -------------------------
 

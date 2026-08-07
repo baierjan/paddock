@@ -22,12 +22,14 @@ image_tag() {
 }
 
 # containerfile_for <profile> -- the Containerfile that backs a profile name.
-# "default" is special: a personal, untracked profiles/latest/Containerfile
-# (see .gitignore) takes precedence over the shipped profiles/default/
-# Containerfile when present. Every other name maps to its own directory.
+# A personal override at ~/.local/share/paddock/profiles/<profile>/Containerfile
+# takes precedence over the shipped profiles/<profile>/Containerfile, for every
+# profile name (including "base"). This is the one customization point that
+# works both from a git checkout and from a packaged (read-only) install.
 containerfile_for() {
-    if [ "$1" = "default" ] && [ -f "${PROFILES_DIR}/latest/Containerfile" ]; then
-        echo "${PROFILES_DIR}/latest/Containerfile"
+    local override="${HOME}/.local/share/paddock/profiles/$1/Containerfile"
+    if [ -f "${override}" ]; then
+        echo "${override}"
     else
         echo "${PROFILES_DIR}/$1/Containerfile"
     fi
@@ -83,8 +85,8 @@ build_profile() {
 ensure_image() {
     local profile="$1" tag cf reason="" built inputs
     # Validate the profile even if its image already exists and is current:
-    # "default" and "latest" can resolve to the same tag (paddock:latest), so
-    # an existing tag does not by itself prove the requested name is real.
+    # an existing tag doesn't by itself prove the Containerfile behind it
+    # (shipped or personally overridden) still exists.
     assert_profile "${profile}"
     tag="$(image_tag "${profile}")"
     cf="$(containerfile_for "${profile}")"
@@ -231,9 +233,9 @@ if [ -z "${ACTION}" ] || [ "${ACTION}" = "help" ] || [ "${ACTION}" = "--help" ] 
     echo "  $0 run              # Build if needed, then launch the sandbox"
     echo "  $0 upgrade          # Fetch latest assistants and update hashes"
     echo
-    echo "'default' always builds/runs as tag 'paddock:latest'. It resolves to"
-    echo "profiles/latest/Containerfile if you have created one locally"
-    echo "(a personal override, not shipped), otherwise profiles/default/Containerfile."
+    echo "'default' always builds/runs as tag 'paddock:latest'. Any profile can be"
+    echo "personally overridden via ~/.local/share/paddock/profiles/<profile>/Containerfile,"
+    echo "which takes precedence over the shipped profiles/<profile>/Containerfile."
     exit 1
 fi
 

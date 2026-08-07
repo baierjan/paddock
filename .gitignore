@@ -1,7 +1,3 @@
-# Personal override for the default profile (see paddock.sh containerfile_for
-# and AGENTS.md). Not shipped; create it locally to override profiles/default.
-/profiles/latest/
-
 # test_paddock.sh scratch directories, left behind on a failed run.
 /mock_bin/
 /mock_home/

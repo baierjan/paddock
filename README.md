@@ -86,13 +86,14 @@ To build a profile (or build the core `paddock-base`):
 ./paddock.sh rebuild          # forces the default profile and its base
 ```
 
-#### Overriding the Default Profile
-The general-purpose profile always builds and runs as `paddock:latest`, regardless of where its
-`Containerfile` comes from. Normally that is `profiles/default/`, but if you create your own
-`profiles/latest/Containerfile` (not shipped by this repo, and listed in `.gitignore`), it takes
-precedence for every spelling of the default profile: `./paddock.sh build`, `build default`, and
-`build latest` all resolve to it. This lets you customize the general-purpose sandbox on your own
-machine without touching a tracked file. Any other profile name is unaffected by the override.
+#### Overriding a Profile
+Any profile can be personally customized without touching a tracked file: a
+`~/.local/share/paddock/profiles/<profile>/Containerfile`, if present, takes precedence over the
+shipped `profiles/<profile>/Containerfile` for that profile name. For example, create
+`~/.local/share/paddock/profiles/default/Containerfile` to customize the general-purpose sandbox on
+your own machine — it still builds and runs as `paddock:latest` regardless of which Containerfile
+backs it. The same mechanism works for `base` or any other profile, and works whether `paddock.sh`
+was checked out from git or installed system-wide.
 
 #### Bundled AI Assistants
 The base image installs both `opencode` (`opencode-ai`) and the Gemini CLI (`@google/gemini-cli`)

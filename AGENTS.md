@@ -14,7 +14,7 @@ podman container runlabel run paddock:latest   # equivalent, needs no checkout
 ```
 
 `profile` defaults to `default`, which always builds/runs as tag `paddock:latest` regardless of
-which Containerfile backs it — see "The 'default' profile is overridable" below.
+which Containerfile backs it — see "Profiles are personally overridable" below.
 
 `test_paddock.sh` is offline: it shims `podman` via a generated `mock_bin/` on `PATH` and asserts
 the exact logged command lines. It does **not** need podman/krun installed — keep it that way; new
@@ -31,8 +31,7 @@ always enforces the gate.
 
 - On failure (`set -e`) cleanup is skipped and `mock_bin/` and `mock_home/` are left in the repo
   root — they are placed relative to `BASH_SOURCE`, not the CWD, so they land there wherever you
-  invoke the suite from. `.gitignore` covers both, plus `profiles/latest/` (see below) — delete
-  them before `git add` regardless, since a stray copy can still shadow the real profile locally.
+  invoke the suite from. `.gitignore` covers both — delete them before `git add` regardless.
 - Each test states its own preconditions via `MOCK_IMAGES` (space-separated tags that "exist") and
   `MOCK_IMAGE_EPOCH` (image creation time; the far-future default means "current", `0` means
   "stale"). There is no shared mock state and no ordering between tests — keep it that way rather
@@ -48,10 +47,11 @@ always enforces the gate.
   default and the staleness check stays inert. Tests 4 and 8 set `MOCK_IMAGE_EPOCH=0` to force the
   rebuild path (build and run respectively); Tests 3 and 7 assert the opposite (no spurious
   rebuild). Prefer that env var over touching file mtimes.
-- Tests 11-12 create and remove a real `profiles/latest/Containerfile` on disk to exercise the
-  override in "The 'default' profile is overridable" below. Like the mock dirs, a failure mid-test
-  leaves it behind; `.gitignore` keeps that from becoming a stray commit, but it will still shadow
-  `profiles/default/` for every subsequent invocation until removed.
+- Tests 11-12 create and remove real `Containerfile`s under the mock `HOME`'s
+  `.local/share/paddock/profiles/<name>/` to exercise the override described in "Profiles are
+  personally overridable" below. Since `HOME` is redirected to `mock_home/` for the whole suite
+  (see above), these never touch a real `~/.local/share/paddock/`; a failure mid-test leaves them
+  under `mock_home/`, which is deleted along with it.
 
 ## The flag list has exactly one home
 
@@ -91,36 +91,39 @@ argv** (it fails loudly as image-not-found, not silently).
 unique auto-generated names. A path cannot go there anyway: podman's `NameRegex` is
 `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`, which rejects `$PWD` for its slashes.
 
-## The "default" profile is overridable
+## Profiles are personally overridable
 
-`profiles/default/` is the shipped general-purpose profile, but the name you actually address it by
-is `default`, not a directory name — `paddock.sh` resolves `default` through `containerfile_for()`:
-if a `profiles/latest/Containerfile` exists it is used *instead of* `profiles/default/`, for every
-spelling (`build`, `build default`, `build latest` all resolve to the same file when the override is
-present). `profiles/latest/` is never shipped by this repo and is listed in `.gitignore` — it exists
-purely as a personal, machine-local override point.
+Every profile can be overridden without touching the shipped tree: `containerfile_for()` checks
+`~/.local/share/paddock/profiles/<profile>/Containerfile` first and falls back to the shipped
+`profiles/<profile>/Containerfile` only if no override exists. This is the single override
+mechanism for every profile name, including `base` — there is no special-cased name. It lives under
+`~/.local/share/paddock/`, alongside the persistent sandbox homes (`run_profile()`'s
+`~/.local/share/paddock/homes/<profile>`), because that tree is already the project's convention for
+machine-local, never-shipped state, and — unlike a path inside the repo/install tree — it is
+writable regardless of whether `paddock.sh` was checked out from git or installed system-wide
+(e.g. from a package, under a read-only `/usr/share/paddock`).
 
-Regardless of which file backs it, the image always tags as `paddock:latest` (`image_tag()`
-special-cases `default` the same way it special-cases `base` → `paddock-base:latest`). This is
-deliberate: `podman container runlabel run paddock:latest` and every doc reference to that tag must
-keep working whether or not a local override exists.
+Regardless of which file backs a profile, its image tag is derived from the profile name alone
+(`image_tag()`), never from which Containerfile produced it. This is deliberate:
+`podman container runlabel run paddock:latest` and every doc reference to that tag must keep working
+whether or not a personal override exists for `default`.
 
-Two things that look like they should generalize but must not:
+Worth knowing:
 
-- **The override is scoped to the name `default` only.** `containerfile_for()` checks
-  `[ "$1" = "default" ]` before checking whether `profiles/latest/Containerfile` exists — checking
-  only the file's existence would make *every* profile (including `base`) silently resolve to the
-  override. Test 12 pins this by asserting `build base` is unaffected while an override is active.
-- **Typing `latest` explicitly is not an alias of `default`.** If no `profiles/latest/` override
-  exists, `./paddock.sh build latest` fails with a normal "profile not found" error — it is treated
-  as an ordinary (currently nonexistent) profile name, not silently redirected to
-  `profiles/default/`. Only `default` gets fallback resolution. Test 11 pins this.
-- **`ensure_image()` validates the profile even when its image already exists.** Before this
-  feature, a profile's tag was unique to its name, so an existing tag was itself proof the name was
-  valid. That stopped being true the moment `default` and `latest` could share `paddock:latest`: a
-  stale `paddock:latest` built from `profiles/default/` could otherwise make `build latest` silently
-  no-op without ever checking `profiles/latest/` exists. `ensure_image()` calls `assert_profile()`
-  unconditionally, before the "does the tag already exist" fast path, to close this.
+- **The override key is the profile name itself.** Overriding `default` means creating
+  `~/.local/share/paddock/profiles/default/Containerfile`; overriding `base` means
+  `~/.local/share/paddock/profiles/base/Containerfile`. There is no indirection through a
+  differently-named directory. Tests 11-12 pin that an override for one profile has no effect on
+  another.
+- **`ensure_image()` validates the profile even when its image already exists.** A profile's tag is
+  unique to its name, but that alone doesn't prove the Containerfile behind it (shipped or
+  overridden) is still there — e.g. the override could have been deleted since the image was last
+  built. `ensure_image()` calls `assert_profile()` unconditionally, before the "does the tag already
+  exist" fast path, to close this.
+- **An override Containerfile still builds with the repo/install root as its context**
+  (`podman build -f <containerfile> "$ROOT_DIR"`, same as every other profile — see "Build context"
+  under Architecture constraints). A `COPY` in an override resolves relative to `$ROOT_DIR`, not to
+  the override's own directory under `~/.local/share/paddock/`.
 
 ## Architecture constraints
 
