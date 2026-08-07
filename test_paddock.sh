@@ -7,7 +7,13 @@ MOCK_LOG="/tmp/mock_podman.log"
 CONTAINERFILE="${ROOT_DIR}/profiles/default/Containerfile"
 BASE_CONTAINERFILE="${ROOT_DIR}/profiles/base/Containerfile"
 BUILD_BASE="podman build -t paddock-base:latest -f ${BASE_CONTAINERFILE} ${ROOT_DIR}"
-BUILD_DEFAULT="podman build -t paddock:latest -f ${CONTAINERFILE} ${ROOT_DIR}"
+# The exact flattened label run_label_for() produces with no PADDOCK_*/
+# XDG_DATA_HOME overrides set. `$${}HOME`/`$${}PWD` appear as raw argv here,
+# since the mock doesn't simulate podman's own reparse -- see run_label_for()
+# in paddock.sh for why that spelling is needed.
+# shellcheck disable=SC2016
+DEFAULT_LABEL='podman run --rm --interactive --tty --runtime krun --network pasta --annotation krun.use_passt=1 --annotation krun.ram_mib=8192 --annotation krun.cpus=4 --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=2048m --pids-limit 1024 --hostname paddock-latest --user ai --userns keep-id:uid=1000,gid=1000 --volume $${}HOME/.local/share/paddock/homes/default:/home/ai:z --volume $${}PWD:/home/ai/sandbox:z --workdir /home/ai/sandbox paddock:latest'
+BUILD_DEFAULT="podman build -t paddock:latest -f ${CONTAINERFILE} --label run=${DEFAULT_LABEL} ${ROOT_DIR}"
 BOTH_IMAGES="paddock-base:latest paddock:latest"
 
 # --- Lint gate ---------------------------------------------------------------
@@ -83,18 +89,6 @@ OVERRIDE_ROOT="${HOME}/.local/share/paddock/profiles"
 # --- Helpers -----------------------------------------------------------------
 
 reset_log() { : > "${MOCK_LOG}"; }
-
-# label_run -- flattens the profile's `LABEL run` to a single line. `$HOME` and
-# `$PWD` are left unexpanded: podman substitutes those at runlabel time, so the
-# label is asserted in the form it is stored in.
-label_run() {
-    sed -n '/^LABEL run="/,/"$/p' "${CONTAINERFILE}" \
-        | sed -e 's/\\$//' \
-        | tr '\n' ' ' \
-        | sed -e 's/^LABEL run="//' -e 's/"[[:space:]]*$//' \
-        | tr -s ' ' \
-        | sed -e 's/[[:space:]]*$//' -e 's/\\\$/$/g'
-}
 
 # assert_log <fixed-substring> <description>
 assert_log() {
@@ -250,7 +244,9 @@ rm -rf "${OVERRIDE_ROOT}/default"
 # profiles/<name>/Containerfile, and still resolves to the same image tag.
 echo "Test 12: a personal override takes precedence over the shipped profile..."
 OVERRIDE_DEFAULT="${OVERRIDE_ROOT}/default/Containerfile"
-BUILD_OVERRIDE_DEFAULT="podman build -t paddock:latest -f ${OVERRIDE_DEFAULT} ${ROOT_DIR}"
+# 'default' is recognized by run_label_for() regardless of which Containerfile
+# backs it, so the override build gets the same baked-in label as the shipped one.
+BUILD_OVERRIDE_DEFAULT="podman build -t paddock:latest -f ${OVERRIDE_DEFAULT} --label run=${DEFAULT_LABEL} ${ROOT_DIR}"
 mkdir -p "$(dirname "${OVERRIDE_DEFAULT}")"
 echo 'FROM paddock-base:latest' > "${OVERRIDE_DEFAULT}"
 
@@ -276,20 +272,21 @@ assert_no_log "${BUILD_BASE}" "profiles/base/Containerfile is not built while ov
 rm -rf "${OVERRIDE_ROOT}/base"
 echo "PASS: personal overrides resolve per-profile and preserve tag naming"
 
-# --- the label is the only definition of the sandbox -------------------------
+# --- the baked-in label is the only definition of the sandbox ----------------
 
 # Test 13: paddock.sh delegates every mount and security flag to `LABEL run`, so
-# the mock cannot observe them. Assert the non-negotiable controls are present.
-# Tunables (sizes, counts) are deliberately NOT pinned, only that the control
-# exists, so limits can be retuned without touching this suite.
-echo "Test 13: verifying security invariants in 'LABEL run'..."
-LABEL="$(label_run)"
-if [ -z "${LABEL}" ]; then
-    echo "FAIL: Could not extract 'LABEL run' from ${CONTAINERFILE}" >&2
-    exit 1
-fi
-# The `$HOME`/`$PWD` below are literal: the label stores them unexpanded and
-# podman substitutes them at runlabel time, so they must be matched verbatim.
+# the mock cannot observe them directly -- it only sees the `podman build
+# --label run=...` argument on the logged command line. Assert the
+# non-negotiable controls are present there.
+# Tunables (sizes, counts) are deliberately NOT pinned to a single value here
+# (Test 14 covers that they are overridable), only that the control exists.
+echo "Test 13: verifying security invariants in the baked-in run label..."
+reset_log
+MOCK_IMAGES="paddock-base:latest" "${ROOT_DIR}/paddock.sh" build default
+LABEL="$(tail -n 1 "${MOCK_LOG}")"
+# `$${}HOME`/`$${}PWD` below are the exact, unreparsed form run_label_for()
+# produces (see there for why); real podman reparses these into literal
+# `$HOME`/`$PWD` for `podman container runlabel` to expand later.
 # shellcheck disable=SC2016
 for flag in \
     '--runtime krun' \
@@ -303,23 +300,91 @@ for flag in \
     '--annotation krun.cpus=' \
     '--user ai' \
     '--userns keep-id:uid=1000,gid=1000' \
-    '--volume $HOME/.local/share/paddock/homes/default:/home/ai:z' \
-    '--volume $PWD:/home/ai/sandbox:z' \
+    '--volume $${}HOME/.local/share/paddock/homes/default:/home/ai:z' \
+    '--volume $${}PWD:/home/ai/sandbox:z' \
     '--workdir /home/ai/sandbox'
 do
     case "${LABEL}" in
         *"${flag}"*) ;;
         *)
-            echo "FAIL: 'LABEL run' is missing required flag: ${flag}" >&2
+            echo "FAIL: baked-in run label is missing required flag: ${flag}" >&2
             echo "  label: ${LABEL}" >&2
             exit 1
             ;;
     esac
 done
-echo "PASS: 'LABEL run' contains all required security flags"
+echo "PASS: baked-in run label contains all required security flags"
 
-# Test 14: upgrade updates base Containerfile build variables safely
-echo "Test 14: upgrade assistants..."
+# Test 14: PADDOCK_RAM_MIB/CPUS/PIDS_LIMIT/TMP_SIZE override the defaults
+# baked into the 'default' profile's run label at build time.
+echo "Test 14: resource limits are customizable via env vars..."
+reset_log
+MOCK_IMAGES="paddock-base:latest" \
+    PADDOCK_RAM_MIB=4096 PADDOCK_CPUS=2 PADDOCK_PIDS_LIMIT=256 PADDOCK_TMP_SIZE=512m \
+    "${ROOT_DIR}/paddock.sh" build default
+LABEL="$(tail -n 1 "${MOCK_LOG}")"
+for flag in \
+    '--annotation krun.ram_mib=4096' \
+    '--annotation krun.cpus=2' \
+    '--pids-limit 256' \
+    'size=512m'
+do
+    case "${LABEL}" in
+        *"${flag}"*) ;;
+        *)
+            echo "FAIL: PADDOCK_* env vars did not override the label: ${flag}" >&2
+            echo "  label: ${LABEL}" >&2
+            exit 1
+            ;;
+    esac
+done
+echo "PASS: resource limits are overridable via PADDOCK_* env vars"
+
+# Test 15: an XDG_DATA_HOME that is itself $HOME plus a fixed suffix keeps
+# the portable $${}HOME token -- only the suffix is baked in.
+echo "Test 15: a \$HOME-relative XDG_DATA_HOME keeps the portable \$HOME token..."
+reset_log
+MOCK_IMAGES="paddock-base:latest" XDG_DATA_HOME="${HOME}/xdg-data" \
+    "${ROOT_DIR}/paddock.sh" build default
+LABEL="$(tail -n 1 "${MOCK_LOG}")"
+# shellcheck disable=SC2016
+case "${LABEL}" in
+    *'--volume $${}HOME/xdg-data/paddock/homes/default:/home/ai:z'*)
+        echo "PASS: the \$HOME-relative suffix is baked in, the \$HOME token stays portable" ;;
+    *)
+        echo "FAIL: a \$HOME-relative XDG_DATA_HOME did not keep the portable \$HOME token" >&2
+        echo "  label: ${LABEL}" >&2
+        exit 1
+        ;;
+esac
+
+# Test 16: a non-$HOME-relative XDG_DATA_HOME bakes in a fully resolved
+# path instead, since there is no $HOME-relative form to express it.
+echo "Test 16: a non-\$HOME-relative XDG_DATA_HOME bakes in a resolved path..."
+reset_log
+MOCK_IMAGES="paddock-base:latest" XDG_DATA_HOME="/mnt/xdg-data" \
+    "${ROOT_DIR}/paddock.sh" build default
+LABEL="$(tail -n 1 "${MOCK_LOG}")"
+case "${LABEL}" in
+    *"--volume /mnt/xdg-data/paddock/homes/default:/home/ai:z"*)
+        echo "PASS: XDG_DATA_HOME is baked into the home volume path" ;;
+    *)
+        echo "FAIL: XDG_DATA_HOME was not reflected in the baked-in label" >&2
+        echo "  label: ${LABEL}" >&2
+        exit 1
+        ;;
+esac
+# shellcheck disable=SC2016
+case "${LABEL}" in
+    *'--volume $${}HOME'*)
+        echo "FAIL: label still contains the portable literal \$HOME token" >&2
+        exit 1
+        ;;
+    *) echo "PASS: the portable literal \$HOME token is gone once XDG_DATA_HOME points elsewhere" ;;
+esac
+
+# Test 17: upgrade updates base Containerfile build variables safely
+echo "Test 17: upgrade assistants..."
 # Create a backup of Containerfile
 cp "${BASE_CONTAINERFILE}" "${BASE_CONTAINERFILE}.bak"
 

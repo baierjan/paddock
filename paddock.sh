@@ -4,6 +4,11 @@ set -eo pipefail
 # Determine directories
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILES_DIR="${ROOT_DIR}/profiles"
+SELF="${ROOT_DIR}/$(basename "${BASH_SOURCE[0]}")"
+
+# Paddock's own persistent, machine-local state: sandbox homes and personal
+# profile overrides. Honors XDG_DATA_HOME per the XDG Base Directory spec.
+DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}/paddock"
 
 # Colors for output
 info() { echo -e "\033[1;34m[INFO]\033[0m $*"; }
@@ -27,12 +32,81 @@ image_tag() {
 # profile name (including "base"). This is the one customization point that
 # works both from a git checkout and from a packaged (read-only) install.
 containerfile_for() {
-    local override="${HOME}/.local/share/paddock/profiles/$1/Containerfile"
+    local override="${DATA_HOME}/profiles/$1/Containerfile"
     if [ -f "${override}" ]; then
         echo "${override}"
     else
         echo "${PROFILES_DIR}/$1/Containerfile"
     fi
+}
+
+# run_label_for <profile> -- the `podman run ...` string to bake into a
+# recognized, first-party profile's image via `podman build --label run=...`.
+# Kept out of the Containerfile because it needs to read host state a static
+# LABEL instruction cannot: env-var-driven resource limits, and an
+# XDG-aware home path. An unrecognized profile name -- every personal
+# override included -- gets nothing back: build_profile() then leaves
+# whatever LABEL run its own Containerfile defines (if any) untouched.
+run_label_for() {
+    local profile="$1"
+    local ram="${PADDOCK_RAM_MIB:-8192}"
+    local cpus="${PADDOCK_CPUS:-4}"
+    local pids="${PADDOCK_PIDS_LIMIT:-1024}"
+    local tmp_size="${PADDOCK_TMP_SIZE:-2048m}"
+    # $HOME/$PWD are spelled `$${}HOME`/`$${}PWD`, not plain or `\$`-escaped:
+    # `--label` reparses the value through Dockerfile's own environment
+    # substitution, which resolves a bare token at build time and doesn't
+    # let `\$`-escaping survive either. See AGENTS.md, "The run label has
+    # exactly one home per profile", for the full mechanism and the parser
+    # trace behind this specific spelling.
+    #
+    # Portable by default (podman resolves $HOME fresh per invocation). If
+    # XDG_DATA_HOME is itself $HOME plus a fixed suffix, only that suffix is
+    # baked in, keeping the portable token; otherwise the fully resolved
+    # path is baked in, since no $HOME-relative form exists to express it.
+    # shellcheck disable=SC2016
+    local home_volume='$${}HOME/.local/share/paddock/homes/default'
+    case "${XDG_DATA_HOME:-}" in
+        "")
+            ;;
+        "${HOME}" | "${HOME}"/*)
+            # shellcheck disable=SC2016
+            home_volume="\$\${}HOME${XDG_DATA_HOME#"${HOME}"}/paddock/homes/default"
+            ;;
+        *)
+            home_volume="${DATA_HOME}/homes/default"
+            ;;
+    esac
+    # shellcheck disable=SC2016
+    local pwd_volume='$${}PWD'
+
+    case "${profile}" in
+        default)
+            # Array elements, not a string: the indentation is inter-word
+            # whitespace, so it can't leak into the joined value below.
+            local -a flags=(
+                podman run --rm --interactive --tty
+                --runtime krun
+                --network pasta
+                --annotation krun.use_passt=1
+                "--annotation krun.ram_mib=${ram}"
+                "--annotation krun.cpus=${cpus}"
+                --cap-drop ALL
+                --security-opt no-new-privileges
+                --read-only
+                "--tmpfs /tmp:rw,noexec,nosuid,nodev,size=${tmp_size}"
+                "--pids-limit ${pids}"
+                --hostname paddock-latest
+                --user ai
+                "--userns keep-id:uid=1000,gid=1000"
+                "--volume ${home_volume}:/home/ai:z"
+                "--volume ${pwd_volume}:/home/ai/sandbox:z"
+                --workdir /home/ai/sandbox
+                paddock:latest
+            )
+            echo "${flags[*]}"
+            ;;
+    esac
 }
 
 # image_epoch <tag> -- image creation time in seconds since the epoch, 0 if unknown.
@@ -69,19 +143,27 @@ assert_profile() {
 # unknown profile is rejected. Dependency ordering is the caller's job, so that
 # base is refreshed exactly once per invocation.
 build_profile() {
-    local profile="$1" tag cf
+    local profile="$1" tag cf label
     assert_profile "${profile}"
     tag="$(image_tag "${profile}")"
     cf="$(containerfile_for "${profile}")"
+    label="$(run_label_for "${profile}")"
 
     info "Building image '${tag}'..."
-    podman build -t "${tag}" -f "${cf}" "${ROOT_DIR}"
+    if [ -n "${label}" ]; then
+        podman build -t "${tag}" -f "${cf}" --label "run=${label}" "${ROOT_DIR}"
+    else
+        podman build -t "${tag}" -f "${cf}" "${ROOT_DIR}"
+    fi
 }
 
 # ensure_image <profile>
 # Rebuilds when the image is missing or older than its inputs. Every mount and
 # security flag lives in the image's `LABEL run`, so an out-of-date image would
-# otherwise keep silently applying the previous limits.
+# otherwise keep silently applying the previous limits. For a recognized
+# profile that label comes from run_label_for() in this very script, so
+# paddock.sh's own mtime (SELF) is an input too, alongside the Containerfile
+# and entrypoint.sh.
 ensure_image() {
     local profile="$1" tag cf reason="" built inputs
     # Validate the profile even if its image already exists and is current:
@@ -100,9 +182,9 @@ ensure_image() {
         reason="is missing"
     else
         built="$(image_epoch "${tag}")"
-        inputs="$(newest_epoch "${cf}" "$(dirname "${cf}")/entrypoint.sh")"
+        inputs="$(newest_epoch "${cf}" "$(dirname "${cf}")/entrypoint.sh" "${SELF}")"
         if [ "${inputs}" -gt "${built}" ]; then
-            reason="is older than its Containerfile"
+            reason="is older than its Containerfile or paddock.sh"
         elif [ "${profile}" != "base" ] && [ "$(image_epoch "$(image_tag base)")" -gt "${built}" ]; then
             reason="is older than paddock-base:latest"
         fi
@@ -138,7 +220,7 @@ run_profile() {
     # The profile's `LABEL run` owns every mount and security flag; this script
     # deliberately keeps no second copy of them. It only pre-creates the host
     # home directory so it is owned by the invoking user rather than by podman.
-    local home_host="${HOME}/.local/share/paddock/homes/default"
+    local home_host="${DATA_HOME}/homes/default"
     mkdir -p "${home_host}"
 
     # Listed in mount order: the home volume lands on /home/ai first, then the
@@ -236,6 +318,11 @@ if [ -z "${ACTION}" ] || [ "${ACTION}" = "help" ] || [ "${ACTION}" = "--help" ] 
     echo "'default' always builds/runs as tag 'paddock:latest'. Any profile can be"
     echo "personally overridden via ~/.local/share/paddock/profiles/<profile>/Containerfile,"
     echo "which takes precedence over the shipped profiles/<profile>/Containerfile."
+    echo
+    echo "For 'default', resource limits are set at build time via PADDOCK_RAM_MIB,"
+    echo "PADDOCK_CPUS, PADDOCK_PIDS_LIMIT and PADDOCK_TMP_SIZE (defaults: 8192, 4,"
+    echo "1024, 2048m). XDG_DATA_HOME, if set, is baked in as the sandbox home's"
+    echo "location instead of the portable default \$HOME/.local/share/paddock."
     exit 1
 fi
 

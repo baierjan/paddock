@@ -41,8 +41,14 @@ always enforces the gate.
   legitimately precede the final action within a *single* test (e.g. Test 8 rebuilds a stale image
   before launching it) — exact-match on the tail line proves the launch happened **last**, not
   merely that it happened somewhere in that test's log.
-- `label_run()` flattens `LABEL run` for Test 13 and leaves `$HOME`/`$PWD` **unexpanded** — the
-  label is asserted in its stored form, since podman expands those at launch.
+- Tests 13-16 read the run label off the logged `podman build ... --label run=...` command line
+  (`tail -n 1` of the mock log right after a `build default`), not off a file — `run_label_for()`
+  bakes it in via `podman build`, it is never written to the Containerfile. `$${}HOME`/`$${}PWD`
+  inside it are asserted in that exact, unreparsed spelling (matched verbatim): that is what
+  `run_label_for()` actually hands to `--label`, and it is real podman's own reparse — not this
+  mock — that turns it into literal `$HOME`/`$PWD` for `podman container runlabel` to expand later.
+  See "The run label has exactly one home per profile" for why that specific spelling, and not a
+  plain or `\$`-escaped `$HOME`/`$PWD`, is required.
 - The mock answers `image inspect` with `${MOCK_IMAGE_EPOCH:-9999999999}`, so images look current by
   default and the staleness check stays inert. Tests 4 and 8 set `MOCK_IMAGE_EPOCH=0` to force the
   rebuild path (build and run respectively); Tests 3 and 7 assert the opposite (no spurious
@@ -53,41 +59,100 @@ always enforces the gate.
   (see above), these never touch a real `~/.local/share/paddock/`; a failure mid-test leaves them
   under `mock_home/`, which is deleted along with it.
 
-## The flag list has exactly one home
+## The run label has exactly one home per profile
 
-`profiles/<profile>/Containerfile` `LABEL run=...` is the **sole** definition of every mount,
-annotation and security flag. `paddock.sh run` does not build a `podman run` line at all — it calls
-`podman container runlabel run paddock:<profile>` and lets podman expand the label. Adding a
-`podman run` back into `paddock.sh` would recreate the duplication this design removed.
+For a profile `run_label_for()` in `paddock.sh` recognizes (currently only `default`), that function
+is the **sole** definition of every mount, annotation and security flag — not the Containerfile.
+`build_profile()` passes it to `podman build --label run=...` at build time, so it still ends up
+baked into the image; `paddock.sh run` still does not build a `podman run` line at all, it calls
+`podman container runlabel run paddock:<profile>` and lets podman expand the baked-in label. Adding
+a `podman run` back into `paddock.sh` would recreate the duplication this design removed.
+
+**A literal, still-unexpanded `$HOME`/`$PWD` cannot be spelled as `$HOME`/`$PWD` or `\$HOME`/`\$PWD`
+in this value — it must be `$${}HOME`/`$${}PWD`.** `podman build --label run=...` re-injects the
+value as a *synthesized* `LABEL "run"="..."` instruction and reparses it through Dockerfile's own
+environment-variable substitution (`imagebuildah/executor.go` builds the instruction text via Go's
+`%q`; `imagebuilder`'s own `shell_parser.go` — not the `moby/buildkit` shell package used elsewhere
+in this codebase — then reparses it), the same mechanism that expands `${ARG}`/`${ENV}` references
+elsewhere in a Containerfile:
+
+- A bare `$HOME`/`$PWD` resolves against the *build's* environment instead of surviving to
+  `podman container runlabel` — `$PWD` came back empty (`os.Environ()` on the build host rarely has
+  it, matching podman's own `containers_runlabel.go` comment: "it appears PWD is not in the os env
+  list"), while `$HOME` silently baked in the *builder's* home directory, permanently, which only
+  looked correct because the same user built and ran the image.
+- `\$HOME` does not survive either: `%q` unconditionally doubles a literal backslash (`\` → `\\`),
+  and `imagebuilder`'s reparse only removes one level of that doubling (`\\` → `\`), leaving a bare,
+  unescaped `$PWD` right behind it — the same failure as above, just introduced through escaping
+  that looks like it should have worked.
+- `$${}HOME` does survive, because of how `imagebuilder`'s parser (`shellWord.processDollar()`)
+  reads a bare `$` one character at a time: the first `$` is immediately followed by a second `$`,
+  which isn't a valid identifier character, so `processName()` returns empty and that first `$` is
+  emitted as a literal `$`. The second `$` then sees `{` next, parses `${}` as an *empty* variable
+  name, and resolves it to `""` via a plain, always-succeeds lookup. The trailing `HOME` was never
+  part of either token — it's ordinary text with no leading `$`, so it passes through untouched.
+  Concatenated, `$` + `""` + `HOME` reads back out as the literal text `$HOME`. `%q` doesn't touch
+  any of this either, since none of `$`, `{`, `}` need escaping in a Go string literal.
+
+The label moved out of the Containerfile specifically because a static `LABEL` instruction cannot
+read host state at build time: `run_label_for()` resolves `PADDOCK_RAM_MIB` / `PADDOCK_CPUS` /
+`PADDOCK_PIDS_LIMIT` / `PADDOCK_TMP_SIZE` (env vars, defaulting to today's values) and, if
+`XDG_DATA_HOME` is set, an XDG-aware home path, none of which a Containerfile can express. A profile
+name `run_label_for()` does not recognize — every personal override under an unrecognized name
+included, see "Profiles are personally overridable" — gets nothing back from it; `build_profile()`
+then omits `--label` entirely and whatever `LABEL run` that Containerfile defines itself (if any)
+stands, unchanged from the old design. This is a deliberate, narrow exception to "Profiles are plain
+Containerfiles by design" in Conventions below: the *package/build recipe* stays a plain Containerfile
+for every profile; only the *run label*, for names `run_label_for()` recognizes, is assembled this
+way. A name it does not recognize is unaffected either way: it keeps whatever `LABEL run` its own
+(shipped or overridden) Containerfile defines.
+
+**An `XDG_DATA_HOME` that is itself `$HOME`-relative keeps the portable `$HOME` token.** Setting
+`XDG_DATA_HOME` doesn't automatically mean giving up portability: `run_label_for()` checks whether
+its value is `$HOME` itself or `$HOME` plus a fixed suffix (the common case — e.g. the XDG default
+of `$HOME/.local/share` — and anything else `$HOME`-relative) and, if so, bakes in only that suffix
+next to the still-literal `$${}HOME` token, exactly as if `XDG_DATA_HOME` had never been set. Only
+an `XDG_DATA_HOME` pointing somewhere genuinely unrelated to `$HOME` (e.g. `/mnt/xdg-data`) loses
+portability, since there is then no `$HOME`-relative form left to express.
 
 Consequences worth knowing:
 
 - **The limits are baked into the image**, so an out-of-date image would apply out-of-date limits.
   `ensure_image()` guards this: `paddock.sh run` compares the image's creation time
   (`podman image inspect --format '{{.Created.Unix}}'`) against the mtimes of the profile's
-  `Containerfile`/`entrypoint.sh`, and against the base image, rebuilding whatever is behind. Base
+  `Containerfile`/`entrypoint.sh` *and `paddock.sh` itself* (`SELF`, since that is where a recognized
+  profile's label logic now lives), and against the base image, rebuilding whatever is behind. Base
   is checked first so a base change cascades. `build` and `run` share this path; `rebuild` skips
   the check and always builds. `build_profile()` is a pure builder and the single place an unknown
   profile is rejected — keep dependency ordering in its callers, or base gets built twice. Editing
-  `LABEL run` therefore takes effect on the next `build`/`run`, but a bare `podman container
-  runlabel` does **not** get this and needs `./paddock.sh rebuild`.
+  `run_label_for()` (or a profile's own `LABEL run`) therefore takes effect on the next `build`/
+  `run`, but a bare `podman container runlabel` does **not** get this and needs `./paddock.sh
+  rebuild`. Env vars alone (`PADDOCK_RAM_MIB` etc.) changing between runs does **not** trigger a
+  rebuild either — only a file mtime does — so a limit change via env var needs an explicit
+  `./paddock.sh rebuild` to actually take effect, same as an `upgrade`-updated `ARG` in the base
+  Containerfile.
 - **The mock cannot see the flags.** Since podman resolves the label internally, `test_paddock.sh`
   only observes `podman container runlabel run <tag>`. Test 13 therefore asserts the required
-  controls textually against the label (`--cap-drop ALL`, `--read-only`, `no-new-privileges`,
-  `--user ai`, `--userns keep-id`, `noexec` on `/tmp`, `--network pasta`, `--runtime krun`, and the
-  presence of `--pids-limit` / `krun.ram_mib` / `krun.cpus`). Tunable *values* are deliberately not
-  pinned, so limits can be retuned without touching the suite. Add new security flags to that list.
+  controls textually against the `podman build --label run=...` argument on the logged command line
+  (`--cap-drop ALL`, `--read-only`, `no-new-privileges`, `--user ai`, `--userns keep-id`, `noexec`
+  on `/tmp`, `--network pasta`, `--runtime krun`, the presence of `--pids-limit` / `krun.ram_mib` /
+  `krun.cpus`). Test 14 that the four `PADDOCK_*` env vars actually change those values, Test 15
+  that a `$HOME`-relative `XDG_DATA_HOME` keeps the `$${}HOME` spelling and only bakes in the
+  suffix, Test 16 that a non-`$HOME`-relative one bakes in a fully resolved path instead. Add new
+  security flags to Test 13's list.
 - **`docs/design.md` §6.2 quotes the whole `LABEL run`** and goes stale silently — docs only.
 - `README.md` describes the flags **by name, with no numeric values**. Do not re-add concrete limits.
 
 `runlabel` expands only `$HOME`, `$PWD`, `$IMAGE`, `$NAME` and `$OPT1..3` (the last three via hidden
 `--opt1..3` flags); everything else silently becomes `""`. The man page's VARIABLES section omits
 `HOME` and the `OPT`s — trust `pkg/domain/infra/abi/containers_runlabel.go` over the docs. Two
-consequences: the label cannot express anything derived (no `basename`, no string ops), and because
-podman does `os.Expand` then `shlex.Split`, **a `$PWD` or `$HOME` containing a space breaks the
-argv** (it fails loudly as image-not-found, not silently).
+consequences: the label cannot express anything derived (no `basename`, no string ops) — which is
+exactly why `XDG_DATA_HOME` has to be resolved in bash at build time rather than left as a token for
+podman to expand later, it is not on that substitution list and would silently become `""` — and
+because podman does `os.Expand` then `shlex.Split`, **a `$PWD` or `$HOME` containing a space breaks
+the argv** (it fails loudly as image-not-found, not silently).
 
-`LABEL run` deliberately omits `--name` so concurrent launches from different directories get
+The baked-in label deliberately omits `--name` so concurrent launches from different directories get
 unique auto-generated names. A path cannot go there anyway: podman's `NameRegex` is
 `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`, which rejects `$PWD` for its slashes.
 
@@ -107,6 +172,13 @@ Regardless of which file backs a profile, its image tag is derived from the prof
 (`image_tag()`), never from which Containerfile produced it. This is deliberate:
 `podman container runlabel run paddock:latest` and every doc reference to that tag must keep working
 whether or not a personal override exists for `default`.
+
+The same principle now extends to the run label: `run_label_for()` (see "The run label has exactly
+one home per profile") keys off the profile *name*, not the Containerfile behind it, so overriding
+`default` still gets the exact same paddock.sh-baked label as the shipped Containerfile — a
+`--label run=...` from `build_profile()` wins over anything the override's own `LABEL run` might
+independently declare. A profile name `run_label_for()` does not recognize is unaffected either way:
+it keeps whatever `LABEL run` its own (shipped or overridden) Containerfile defines.
 
 Worth knowing:
 
@@ -144,9 +216,12 @@ Worth knowing:
 
 **Profile Containerfiles:** `FROM paddock-base:latest` → `USER root` → `zypper --non-interactive
 install --no-recommends` → `zypper clean --all && rm -rf /var/cache/zypp/* /tmp/* /var/tmp/*` →
-`LABEL run="..."` → `USER ai`. Keep package lists alphabetized (ASCII order: `ShellCheck` sorts
-before lowercase names). Profiles are plain Containerfiles by design — do not add a DSL, config
-parser, or generator layer.
+`USER ai`. Keep package lists alphabetized (ASCII order: `ShellCheck` sorts before lowercase names).
+Profiles are plain Containerfiles by design — do not add a DSL, config parser, or generator layer.
+The one deliberate, narrow exception is the run label for profile names `paddock.sh` recognizes
+(currently only `default`): see "The run label has exactly one home per profile". A profile
+`run_label_for()` does not recognize still defines its own `LABEL run="..."` directly, in the usual
+place, if it wants one.
 
 **`paddock.sh`:** portable Bash, `set -e`, and user-facing output through the existing `info()` /
 `error()` helpers (`error()` exits 1) rather than bare `echo`. Declare-and-assign separately when

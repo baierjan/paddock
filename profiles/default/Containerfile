@@ -31,24 +31,10 @@ ENV LANG=en_US.UTF-8 \
 # TERM default now that kitty's terminfo entry is actually installed here.
 ENV TERM=xterm-kitty
 
-# Define run label for Podman
-LABEL run="podman run --rm --interactive --tty \
-  --runtime krun \
-  --network pasta \
-  --annotation krun.use_passt=1 \
-  --annotation krun.ram_mib=8192 \
-  --annotation krun.cpus=4 \
-  --cap-drop ALL \
-  --security-opt no-new-privileges \
-  --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=2048m \
-  --pids-limit 1024 \
-  --hostname paddock-latest \
-  --user ai \
-  --userns keep-id:uid=1000,gid=1000 \
-  --volume \$HOME/.local/share/paddock/homes/default:/home/ai:z \
-  --volume \$PWD:/home/ai/sandbox:z \
-  --workdir /home/ai/sandbox \
-  paddock:latest"
+# `LABEL run` is intentionally not defined here: paddock.sh's run_label_for()
+# bakes it in at build time via `podman build --label`, so it can read
+# env-var-driven resource limits and an XDG-aware home path that a static
+# LABEL instruction cannot. See AGENTS.md, "The run label has exactly one
+# home per profile".
 
 USER ai

@@ -45,9 +45,11 @@ Unlike complex multi-bind sandboxes, Paddock utilizes a **Pure Containerfile Lay
 8.  **Clean System Defaults:** Environment prompts and standard tools are declared system-wide, keeping `/home/ai` completely empty in the image.
 
 > The concrete limits (RAM, vCPU count, `/tmp` size, PID cap) are intentionally not
-> reproduced here. See each profile's `LABEL run` in its `Containerfile` for the
-> authoritative values; `paddock.sh run` delegates to that same label rather than
-> keeping a second copy.
+> reproduced here. For `default`, they are baked into the image at build time by
+> `paddock.sh` itself (see `run_label_for()`), overridable via `PADDOCK_RAM_MIB`,
+> `PADDOCK_CPUS`, `PADDOCK_PIDS_LIMIT` and `PADDOCK_TMP_SIZE`; `./paddock.sh rebuild`
+> is required for a changed env var to actually take effect. Any other profile
+> defines its own `LABEL run` directly in its `Containerfile`.
 
 ---
 
@@ -79,9 +81,9 @@ To build a profile (or build the core `paddock-base`):
 # Or build a specific profile
 ./paddock.sh build default
 ```
-`build` only does work when the image is missing or older than its `Containerfile`, and refreshes
-`paddock-base` the same way. `run` performs the same check before launching, so an edit to
-`LABEL run` takes effect on the next run. To rebuild unconditionally:
+`build` only does work when the image is missing or older than its `Containerfile` (or, for
+`default`, `paddock.sh` itself), and refreshes `paddock-base` the same way. `run` performs the same
+check before launching, so an edit takes effect on the next run. To rebuild unconditionally:
 ```bash
 ./paddock.sh rebuild          # forces the default profile and its base
 ```
@@ -92,8 +94,9 @@ Any profile can be personally customized without touching a tracked file: a
 shipped `profiles/<profile>/Containerfile` for that profile name. For example, create
 `~/.local/share/paddock/profiles/default/Containerfile` to customize the general-purpose sandbox on
 your own machine — it still builds and runs as `paddock:latest` regardless of which Containerfile
-backs it. The same mechanism works for `base` or any other profile, and works whether `paddock.sh`
-was checked out from git or installed system-wide.
+backs it, and still gets the same `paddock.sh`-baked run label (see below) as the shipped
+Containerfile. The same mechanism works for `base` or any other profile, and works whether
+`paddock.sh` was checked out from git or installed system-wide.
 
 #### Bundled AI Assistants
 The base image installs both `opencode` (`opencode-ai`) and the Gemini CLI (`@google/gemini-cli`)
@@ -121,7 +124,7 @@ This automatically:
 ---
 
 ## Native Podman `runlabel` Support
-Each profile's `Containerfile` defines a `LABEL run`, which is the single definition of every mount and security flag. `./paddock.sh run` simply invokes it, so running Podman directly is equivalent and needs no checkout of this repository:
+Every profile's image carries a `LABEL run`, which is the single definition of every mount and security flag — for `default`, baked in by `paddock.sh` at build time (see "Key Features" above); for any other profile, written directly in its `Containerfile`. `./paddock.sh run` simply invokes it, so running Podman directly is equivalent and needs no checkout of this repository:
 ```bash
 podman container runlabel run paddock:latest
 ```
