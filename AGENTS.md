@@ -186,7 +186,7 @@ Worth knowing:
   `profile/Containerfile` relies on this for `COPY profile/entrypoint.sh`.
 - **The image is x86_64-only.** It unconditionally installs the Google Cloud CLI from the
   `cloud-sdk-el10-x86_64` repo, which publishes no other architecture. There is no build-time
-  switch to opt out — assistants (`@google/gemini-cli` + `opencode-ai`) are fixed, not selectable.
+  switch to opt out — assistants (`opencode` + `@google/gemini-cli`) are fixed, not selectable.
 - Host prerequisites for `run` (not for tests): rootless podman, the `krun` runtime, and `pasta`.
 
 ## Conventions

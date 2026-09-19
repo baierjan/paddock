@@ -187,59 +187,31 @@ upgrade_assistants() {
 
     # Parse current values from Containerfile
     local curr_gemini_ver; curr_gemini_ver="$(grep "ARG GEMINI_CLI_VER=" "${cf}" | cut -d= -f2)"
-    local curr_opencode_ver; curr_opencode_ver="$(grep "ARG OPENCODE_AI_VER=" "${cf}" | cut -d= -f2)"
 
     info "Checking for upgrades..."
     info "Current @google/gemini-cli: ${curr_gemini_ver}"
-    info "Current opencode-ai: ${curr_opencode_ver}"
 
-    # Query latest stable versions and metadata
+    # Query latest stable version and metadata
     local gemini_json; gemini_json="$(curl -fsSL https://registry.npmjs.org/@google/gemini-cli/latest)"
-    local opencode_json; opencode_json="$(curl -fsSL https://registry.npmjs.org/opencode-ai/latest)"
-
     local latest_gemini_ver; latest_gemini_ver="$(echo "${gemini_json}" | jq -r .version)"
-    local latest_opencode_ver; latest_opencode_ver="$(echo "${opencode_json}" | jq -r .version)"
 
-    local needs_update=0
-    local new_gemini_ver="${curr_gemini_ver}"
-    local new_gemini_hash; new_gemini_hash="$(grep "ARG GEMINI_CLI_HASH=" "${cf}" | cut -d= -f2)"
-    local new_opencode_ver="${curr_opencode_ver}"
-    local new_opencode_hash; new_opencode_hash="$(grep "ARG OPENCODE_AI_HASH=" "${cf}" | cut -d= -f2)"
-
-    # Handle Gemini CLI Upgrade
     if [ "${latest_gemini_ver}" != "${curr_gemini_ver}" ]; then
         info "New @google/gemini-cli version found: ${latest_gemini_ver}"
         local gemini_integrity; gemini_integrity="$(echo "${gemini_json}" | jq -r .dist.integrity)"
         local gemini_b64="${gemini_integrity#sha512-}"
-        new_gemini_ver="${latest_gemini_ver}"
-        new_gemini_hash="$(echo -n "${gemini_b64}" | openssl enc -base64 -d -A | od -An -tx1 | tr -d ' \n')"
-        needs_update=1
-    fi
+        local new_gemini_hash; new_gemini_hash="$(echo -n "${gemini_b64}" | openssl enc -base64 -d -A | od -An -tx1 | tr -d ' \n')"
 
-    # Handle OpenCode AI Upgrade
-    if [ "${latest_opencode_ver}" != "${curr_opencode_ver}" ]; then
-        info "New opencode-ai version found: ${latest_opencode_ver}"
-        local opencode_integrity; opencode_integrity="$(echo "${opencode_json}" | jq -r .dist.integrity)"
-        local opencode_b64="${opencode_integrity#sha512-}"
-        new_opencode_ver="${latest_opencode_ver}"
-        new_opencode_hash="$(echo -n "${opencode_b64}" | openssl enc -base64 -d -A | od -An -tx1 | tr -d ' \n')"
-        needs_update=1
-    fi
-
-    if [ "${needs_update}" -eq 1 ]; then
         info "Updating ${cf}..."
         sed \
-          -e "s/ARG GEMINI_CLI_VER=.*/ARG GEMINI_CLI_VER=${new_gemini_ver}/" \
+          -e "s/ARG GEMINI_CLI_VER=.*/ARG GEMINI_CLI_VER=${latest_gemini_ver}/" \
           -e "s/ARG GEMINI_CLI_HASH=.*/ARG GEMINI_CLI_HASH=${new_gemini_hash}/" \
-          -e "s/ARG OPENCODE_AI_VER=.*/ARG OPENCODE_AI_VER=${new_opencode_ver}/" \
-          -e "s/ARG OPENCODE_AI_HASH=.*/ARG OPENCODE_AI_HASH=${new_opencode_hash}/" \
           "${cf}" > "${cf}.tmp" && mv "${cf}.tmp" "${cf}"
 
-        info "Successfully upgraded assistants in Containerfile!"
+        info "Successfully upgraded @google/gemini-cli in Containerfile!"
         info "To apply these changes, rebuild your image using:"
         info "  ./paddock.sh rebuild"
     else
-        info "All AI assistants are already up to date!"
+        info "@google/gemini-cli is already up to date!"
     fi
 }
 

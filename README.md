@@ -88,8 +88,8 @@ shipped Containerfile. This works whether `paddock.sh` was checked out from git 
 system-wide.
 
 #### Bundled AI Assistants
-The image installs both `opencode` (`opencode-ai`) and the Gemini CLI (`@google/gemini-cli`)
-globally, alongside the Google Cloud CLI. No build-time selection is required.
+The image installs both `opencode` and the Gemini CLI (`@google/gemini-cli`) globally, alongside
+the Google Cloud CLI. No build-time selection is required.
 
 > Because the Google Cloud CLI is published only for `x86_64`, the image is **x86_64-only**.
 
