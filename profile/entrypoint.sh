@@ -13,5 +13,4 @@ if [ "$(id -u)" = "0" ] && id ai >/dev/null 2>&1; then
     exec setpriv --reuid="${_uid}" --regid="${_gid}" --init-groups "$0" "$@"
 fi
 
-# Execute the final container command
 exec "$@"

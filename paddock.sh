@@ -1,7 +1,6 @@
 #!/bin/bash
 set -eo pipefail
 
-# Determine directories
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="${ROOT_DIR}/$(basename "${BASH_SOURCE[0]}")"
 
@@ -12,11 +11,9 @@ DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}/paddock"
 
 IMAGE="paddock:latest"
 
-# Colors for output
 info() { echo -e "\033[1;34m[INFO]\033[0m $*"; }
 error() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; exit 1; }
 
-# Helper: check for podman
 command -v podman >/dev/null 2>&1 || error "Podman is required but not installed."
 
 # containerfile -- the Containerfile paddock builds. A personal override at
@@ -30,6 +27,14 @@ containerfile() {
     else
         echo "${ROOT_DIR}/profile/Containerfile"
     fi
+}
+
+# resolved_containerfile -- containerfile(), rejecting a missing file.
+resolved_containerfile() {
+    local cf
+    cf="$(containerfile)"
+    [ -f "${cf}" ] || error "Containerfile not found at ${cf}"
+    echo "${cf}"
 }
 
 # run_label -- the `podman run ...` string baked into the image via
@@ -119,8 +124,7 @@ newest_epoch() {
 # build -- unconditional build of the image.
 build() {
     local cf
-    cf="$(containerfile)"
-    [ -f "${cf}" ] || error "Containerfile not found at ${cf}"
+    cf="$(resolved_containerfile)"
 
     info "Building image '${IMAGE}'..."
     podman build -t "${IMAGE}" -f "${cf}" --label "run=$(run_label)" "${ROOT_DIR}"
@@ -134,8 +138,7 @@ build() {
 # and entrypoint.sh.
 ensure_image() {
     local cf reason=""
-    cf="$(containerfile)"
-    [ -f "${cf}" ] || error "Containerfile not found at ${cf}"
+    cf="$(resolved_containerfile)"
 
     if ! podman image exists "${IMAGE}"; then
         reason="is missing"
@@ -179,8 +182,7 @@ run() {
 # profile/Containerfile if newer versions are available.
 upgrade_assistants() {
     local cf
-    cf="$(containerfile)"
-    [ -f "${cf}" ] || error "Containerfile not found at ${cf}"
+    cf="$(resolved_containerfile)"
 
     # Verify required host tools
     command -v curl >/dev/null 2>&1 || error "curl is required on the host for upgrades."
