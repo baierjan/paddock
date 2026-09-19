@@ -180,8 +180,9 @@ Worth knowing:
   manual `mkdir`). The host home bind-mount over `/home/ai` would otherwise mask baked-in files.
   Put shell config in `/etc/bash.bashrc` (starship is initialized there), never in `/home/ai`.
 - **Entrypoint privilege drop**: `profile/entrypoint.sh` re-execs itself via `setpriv` when
-  the guest kernel boots it as UID 0 (krun does this despite `--user ai`). It re-`cd`s to the
-  captured `$PWD` because `setpriv --init-groups` loses it.
+  the guest kernel boots it as UID 0 (krun does this despite `--user ai`). No `cd` is needed
+  around this: cwd is a process attribute (`fs_struct`), untouched by `exec` or by credential
+  syscalls (`setuid`/`setgid`/`initgroups`), so it survives the re-exec on its own.
 - **Build context is the repo root** (`podman build -f profile/Containerfile $ROOT_DIR`);
   `profile/Containerfile` relies on this for `COPY profile/entrypoint.sh`.
 - **The image is x86_64-only.** It unconditionally installs the Google Cloud CLI from the

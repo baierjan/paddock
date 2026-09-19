@@ -3,7 +3,8 @@ set -eo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MOCK_BIN="${ROOT_DIR}/mock_bin"
-MOCK_LOG="/tmp/mock_podman.log"
+MOCK_LOG="$(mktemp)"
+export MOCK_LOG
 CONTAINERFILE="${ROOT_DIR}/profile/Containerfile"
 # The exact flattened label run_label() produces with no PADDOCK_*/
 # XDG_DATA_HOME overrides set. `$${}HOME`/`$${}PWD` appear as raw argv here,
@@ -39,7 +40,7 @@ mkdir -p "${MOCK_BIN}"
 # ordering between tests.
 cat << 'EOF' > "${MOCK_BIN}/podman"
 #!/bin/bash
-echo "podman $*" >> "/tmp/mock_podman.log"
+echo "podman $*" >> "${MOCK_LOG}"
 # Which images exist: space-separated tags in MOCK_IMAGES (default: none).
 if [ "$1" = "image" ] && [ "$2" = "exists" ]; then
     case " ${MOCK_IMAGES:-} " in

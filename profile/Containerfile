@@ -46,9 +46,10 @@ RUN curl -fsSL -o /tmp/gemini-cli.tgz https://registry.npmjs.org/@google/gemini-
     rm -f /tmp/gemini-cli.tgz && \
     npm cache clean --force && \
     rpm --import https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg && \
+    rpm --import https://download.opensuse.org/repositories/SUSE:/CA/openSUSE_Tumbleweed/repodata/repomd.xml.key && \
     zypper --non-interactive addrepo --gpgcheck --refresh --name "Google Cloud CLI" https://packages.cloud.google.com/yum/repos/cloud-sdk-el10-x86_64 google-cloud-cli && \
     zypper --non-interactive addrepo --gpgcheck --refresh https://download.opensuse.org/repositories/SUSE:/CA/openSUSE_Tumbleweed/SUSE:CA.repo && \
-    zypper --gpg-auto-import-keys refresh && \
+    zypper --non-interactive refresh && \
     zypper --non-interactive install --no-recommends ca-certificates-suse google-cloud-cli && \
     zypper clean --all && \
     rm -rf /var/cache/zypp/* /tmp/* /var/tmp/*

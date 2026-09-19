@@ -177,7 +177,8 @@ run() {
 # converts their SHA-512 Base64 hashes into Hex format, and updates
 # profile/Containerfile if newer versions are available.
 upgrade_assistants() {
-    local cf="${ROOT_DIR}/profile/Containerfile"
+    local cf
+    cf="$(containerfile)"
     [ -f "${cf}" ] || error "Containerfile not found at ${cf}"
 
     # Verify required host tools
@@ -194,6 +195,9 @@ upgrade_assistants() {
     # Query latest stable version and metadata
     local gemini_json; gemini_json="$(curl -fsSL https://registry.npmjs.org/@google/gemini-cli/latest)"
     local latest_gemini_ver; latest_gemini_ver="$(echo "${gemini_json}" | jq -r .version)"
+    # Reject a malformed version before it reaches sed and corrupts the Containerfile.
+    [[ "${latest_gemini_ver}" =~ ^[0-9]+(\.[0-9]+)+([-.][0-9A-Za-z.]+)?$ ]] || \
+        error "Unexpected version string from registry: '${latest_gemini_ver}'"
 
     if [ "${latest_gemini_ver}" != "${curr_gemini_ver}" ]; then
         info "New @google/gemini-cli version found: ${latest_gemini_ver}"
