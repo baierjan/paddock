@@ -324,6 +324,17 @@ esac
 # Test 13: ensure_image() validates the Containerfile even when the image
 # already exists -- an existing tag doesn't by itself prove the shipped
 # Containerfile is still there.
+#
+# Tests 13 and 14 both move/mutate the real shipped Containerfile. Restore it
+# on every exit path -- including a failing assertion under `set -e` -- or a
+# mid-test failure leaves the working tree without it.
+restore_containerfile() {
+    if [ -f "${CONTAINERFILE}.bak" ]; then
+        mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
+    fi
+}
+trap restore_containerfile EXIT
+
 echo "Test 13: a missing Containerfile is rejected even if the image exists..."
 mv "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
 assert_fails "'build' is rejected when the Containerfile is missing" \
@@ -332,8 +343,9 @@ mv "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
 
 # Test 14: upgrade updates Containerfile build variables safely
 echo "Test 14: upgrade assistants..."
-# Create a backup of Containerfile
-cp "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
+# Preserve mtime: a plain `cp` would make the restored file look newer than
+# the image built from it, forcing every subsequent build to look stale.
+cp -p "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
 
 # Run upgrade (will trigger upgrade for gemini-cli to 0.55.0)
 "${ROOT_DIR}/paddock.sh" upgrade
@@ -341,12 +353,10 @@ cp "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
 # Assert the Containerfile variables are correctly updated
 if ! grep -q "ARG GEMINI_CLI_VER=0.55.0" "${CONTAINERFILE}"; then
     echo "FAIL: GEMINI_CLI_VER was not updated to 0.55.0" >&2
-    mv "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
     exit 1
 fi
 
-# Restore backup
-mv "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
+mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
 echo "PASS: upgrade successfully updates Containerfile parameters"
 
 echo "=== All Paddock Tests Passed Successfully ==="

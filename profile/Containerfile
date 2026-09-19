@@ -23,6 +23,7 @@ RUN zypper --non-interactive refresh && \
         npm \
         opencode \
         openssh-clients \
+        openssl \
         python3 \
         starship \
         tar \
