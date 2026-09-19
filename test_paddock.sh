@@ -9,24 +9,21 @@ export MOCK_LOG
 MOCK_WORKSPACE="${ROOT_DIR}/mock_workspace"
 CONTAINERFILE="${ROOT_DIR}/profile/Containerfile"
 # The exact flattened label run_label() produces with no PADDOCK_*/
-# XDG_DATA_HOME overrides set. `$${}HOME`/`$${}PWD` appear as raw argv here,
-# since the mock doesn't simulate podman's own reparse -- see run_label()
-# in paddock.sh for why that spelling is needed.
+# XDG_DATA_HOME overrides set; `$${}HOME`/`$${}PWD` appear as raw argv here
+# since the mock doesn't simulate podman's own reparse (see run_label()).
 # shellcheck disable=SC2016
 LABEL='podman run --rm --interactive --tty --runtime krun --network pasta --annotation krun.use_passt=1 --annotation krun.ram_mib=8192 --annotation krun.cpus=4 --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=2048m --pids-limit 1024 --hostname paddock-latest --user ai --userns keep-id:uid=1000,gid=1000 --volume $${}HOME/.local/share/paddock/home:/home/ai:z --volume $${}PWD:/home/ai/sandbox:z --workdir /home/ai/sandbox paddock:latest'
 BUILD="podman build -t paddock:latest -f ${CONTAINERFILE} --label run=${LABEL} ${ROOT_DIR}"
-# What a real image's `.Config.Labels.run` would show: podman's own --label
-# reparse collapses `$${}` down to a single `$` (see run_label() in
-# paddock.sh) before it's ever stored on the image. This is the mock's
-# default "already up to date" answer for `image inspect`.
+# The mock's default "up to date" answer for `image inspect`: what a real
+# image's `.Config.Labels.run` shows after podman's own --label reparse
+# collapses `$${}` to a single `$`.
 BAKED_LABEL="${LABEL//\$\${\}/\$}"
 export BAKED_LABEL
 IMAGES="paddock:latest"
 
 # --- Lint gate ---------------------------------------------------------------
-# Lint before the functional tests. ShellCheck ships in the image, so it is
-# always present inside a paddock sandbox. When it is missing the suite still
-# runs, but the gate is NOT enforced -- hence the loud SKIP.
+# ShellCheck always ships inside a paddock sandbox; when it's missing here,
+# the gate isn't enforced, hence the loud SKIP below.
 echo "=== Linting shell scripts ==="
 if command -v shellcheck > /dev/null 2>&1; then
     mapfile -t SHELL_SCRIPTS < <(find "${ROOT_DIR}" -name '*.sh' -not -path '*/mock_*' | sort)
@@ -43,9 +40,8 @@ fi
 mkdir -p "${MOCK_BIN}" "${MOCK_WORKSPACE}"
 : > "${MOCK_LOG}"
 
-# Create mock podman command. Both stubbed queries are driven by environment
-# variables so every test states its own preconditions -- no shared state, no
-# ordering between tests.
+# Both stubbed queries are driven by environment variables so every test
+# states its own preconditions; no shared state, no ordering between tests.
 cat << 'EOF' > "${MOCK_BIN}/podman"
 #!/bin/bash
 echo "podman $*" >> "${MOCK_LOG}"
@@ -56,9 +52,8 @@ if [ "$1" = "image" ] && [ "$2" = "exists" ]; then
         *) exit 1 ;;
     esac
 fi
-# The image's baked-in `run` label, for the run-label staleness check.
-# Defaults to the current, up-to-date label; a test sets MOCK_IMAGE_LABEL to
-# simulate an image built from a different run_label() (stale).
+# The image's baked-in `run` label; defaults to the current, up-to-date one,
+# and a test sets MOCK_IMAGE_LABEL to simulate a stale one.
 if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
     echo "${MOCK_IMAGE_LABEL-${BAKED_LABEL}}"
     exit 0
@@ -69,7 +64,6 @@ chmod +x "${MOCK_BIN}/podman"
 # Create mock curl command; "latest" is MOCK_GEMINI_VERSION (default 0.99.0), an upgrade over every pinned version here.
 cat << 'EOF' > "${MOCK_BIN}/curl"
 #!/bin/bash
-# Check which package's latest metadata is requested
 if [[ "$*" == *"@google/gemini-cli/latest"* ]]; then
     ver="${MOCK_GEMINI_VERSION:-0.99.0}"
     echo "{\"version\":\"${ver}\",\"dist\":{\"tarball\":\"https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-${ver}.tgz\",\"integrity\":\"sha512-Olber5MK116YhYzdSn0/UPNo3rbxj4CJEgSBARIELwKFm1NHGJ4Fc7kMjvEPPLtxip0Aki8xUM28HG4sQ2GE0g==\"}}"
@@ -83,7 +77,6 @@ export PATH="${MOCK_BIN}:${PATH}"
 
 # Ensure XDG/PADDOCK variables are unset for deterministic test paths
 unset XDG_DATA_HOME
-unset XDG_CONFIG_HOME
 unset PADDOCK_RAM_MIB PADDOCK_CPUS PADDOCK_PIDS_LIMIT PADDOCK_TMP_SIZE
 
 # Override HOME to verify home directory creation
@@ -154,8 +147,7 @@ echo "=== Running Paddock Tests ==="
 # --- build: unconditional, always (re)builds the image ------------------------
 
 # Test 1: build always (re)builds the image, even though it already exists
-# and its baked-in label is current. There is no separate conditional
-# variant any more -- `run` is the only caller that checks first (below).
+# and its baked-in label is current; `run` is the only caller that checks first.
 echo "Test 1: build always (re)builds the image..."
 reset_log
 MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" build
@@ -172,10 +164,8 @@ assert_no_log "podman build" "A current image is not rebuilt before running"
 assert_last_log "podman container runlabel run paddock:latest" \
     "Run delegates to 'podman container runlabel'"
 
-# Test 3: run builds first when the image's baked-in run label no longer
-# matches run_label() (e.g. a PADDOCK_* override changed since it was built).
-# MOCK_IMAGE_LABEL="" simulates that mismatch (also covers an older image
-# built before this label existed at all).
+# Test 3: run builds first when the baked-in run label no longer matches
+# run_label(); MOCK_IMAGE_LABEL="" simulates that mismatch.
 echo "Test 3: run rebuilds when the baked-in run label is out of date..."
 reset_log
 (cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" MOCK_IMAGE_LABEL="" "${ROOT_DIR}/paddock.sh" run)
@@ -217,12 +207,9 @@ echo "PASS: personal override resolves and preserves tag naming"
 
 # --- the baked-in label is the only definition of the sandbox ----------------
 
-# Test 7: paddock.sh delegates every mount and security flag to `LABEL run`, so
-# the mock cannot observe them directly -- it only sees the `podman build
-# --label run=...` argument on the logged command line. Assert the
-# non-negotiable controls are present there.
-# Tunables (sizes, counts) are deliberately NOT pinned to a single value here
-# (Test 10 covers that they are overridable), only that the control exists.
+# Test 7: the mock can only observe the `podman build --label run=...`
+# argument, so this asserts the non-negotiable flags are present in it (not
+# their exact values; Test 8 covers that they're overridable).
 echo "Test 7: verifying security invariants in the baked-in run label..."
 reset_log
 MOCK_IMAGES="" "${ROOT_DIR}/paddock.sh" build
@@ -327,12 +314,11 @@ case "${BAKED_LABEL}" in
 esac
 
 # Test 11: build() validates the Containerfile even when the image already
-# exists -- an existing tag doesn't by itself prove the shipped Containerfile
-# is still there.
+# exists, since an existing tag doesn't prove the Containerfile is still there.
 #
-# Tests 11, 12 and 13 all move/mutate the real shipped Containerfile. Restore
-# it on every exit path -- including a failing assertion under `set -e` -- or
-# a mid-test failure leaves the working tree without it.
+# Tests 11, 12 and 13 all move/mutate the real shipped Containerfile; the trap
+# below restores it on every exit path, including a failing assertion under
+# `set -e`.
 restore_containerfile() {
     if [ -f "${CONTAINERFILE}.bak" ]; then
         mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
@@ -347,8 +333,7 @@ assert_fails "'build' is rejected when the Containerfile is missing" \
 mv "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
 
 # Test 12: ensure_image() (the path 'run' uses) validates the Containerfile
-# too, even when the image already exists AND its run label is current --
-# i.e. even when no rebuild would otherwise be triggered.
+# too, even when no rebuild would otherwise be triggered.
 echo "Test 12: 'run' is rejected when the Containerfile is missing..."
 mv "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
 assert_fails "'run' is rejected when the Containerfile is missing" \
@@ -362,7 +347,6 @@ cp -p "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
 # Run upgrade (will trigger upgrade for gemini-cli to the mock's default 0.99.0)
 "${ROOT_DIR}/paddock.sh" upgrade
 
-# Assert the Containerfile variables are correctly updated
 if ! grep -q "ARG GEMINI_CLI_VER=0.99.0" "${CONTAINERFILE}"; then
     echo "FAIL: GEMINI_CLI_VER was not updated to 0.99.0" >&2
     exit 1

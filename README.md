@@ -8,7 +8,7 @@
 
 **Paddock** is a secure, lightweight, project-specific sandboxed runtime container environment designed to run AI coding assistants (such as OpenCode and Gemini CLI) in complete, virtualized isolation from your host system.
 
-Unlike complex multi-bind sandboxes, Paddock utilizes a single plain **Containerfile** and a **Pristine Home Directory** strategy to provide 100% transparent and standard host bind-mounting under a highly hardened, VM-level virtualization boundary.
+Unlike complex multi-bind sandboxes, Paddock uses a single plain **Containerfile** and a **Pristine Home Directory** strategy to provide 100% transparent and standard host bind-mounting under a highly hardened, VM-level virtualization boundary.
 
 ---
 
@@ -76,7 +76,7 @@ paddock/
 ```
 `build` unconditionally (re)builds the image; run it again any time you edit the `Containerfile` or
 `entrypoint.sh`. `run` builds automatically too, but only when the image is missing or its baked-in
-run label is out of date (e.g. a `PADDOCK_*` env var changed) — it does not pick up a Containerfile
+run label is out of date (e.g. a `PADDOCK_*` env var changed); it does not pick up a Containerfile
 edit on its own, so run `build` explicitly after one.
 
 #### Overriding the Containerfile
@@ -121,12 +121,12 @@ To prevent container file masking (hiding pre-installed files inside the image),
 *   Custom terminal prompts are initialized globally via `starship` in `/etc/bash.bashrc`.
 *   Any shell commands run inside write persistent caches natively to the host's `~/.local/share/paddock/home`, which is bind-mounted directly to `/home/ai`.
 
-Additionally, to work seamlessly inside virtualized **`krun`** environments (where guest kernels boot standard entrypoints as root by default), Paddock includes a secure `/usr/local/bin/entrypoint.sh` privilege-dropper. This utility dynamically captures the container's starting directory, registers the `ai` user's environmental properties, and utilizes `setpriv` to drop all VM-level permissions down to the unprivileged `ai` user before spawning your shell.
+Additionally, to work correctly inside virtualized **`krun`** environments (where guest kernels boot standard entrypoints as root by default), Paddock includes a secure `/usr/local/bin/entrypoint.sh` privilege-dropper. This script captures the container's starting directory, registers the `ai` user's environmental properties, and uses `setpriv` to drop all VM-level permissions down to the unprivileged `ai` user before spawning your shell.
 
 ---
 
 ## Testing & Verification
-Paddock includes a robust automated mock-based integration test suite. You can run it on any Linux or macOS environment to verify script behavior and container argument generation without needing `podman` fully installed:
+Paddock includes an automated mock-based integration test suite. You can run it on any Linux or macOS environment to verify script behavior and container argument generation without needing `podman` fully installed:
 ```bash
 ./test_paddock.sh
 ```
@@ -135,5 +135,3 @@ Paddock includes a robust automated mock-based integration test suite. You can r
 
 ## License
 Paddock is released under the terms of the [Apache License, Version 2.0 (Apache-2.0)](LICENSE).
-
-Copyright (C) 2026 Jan Baier <jbaier@suse.cz>

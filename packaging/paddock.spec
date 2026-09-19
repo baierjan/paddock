@@ -23,9 +23,8 @@ Summary:        Hardened krun/microVM-backed Podman sandboxes for AI coding CLIs
 License:        Apache-2.0
 URL:            https://github.com/baierjan/paddock
 Source:         %{name}-%{version}.tar.gz
-# For %%check: test_paddock.sh is fully offline (podman/curl are shimmed via a
-# generated mock_bin/ on PATH) but still runs the real jq/openssl to exercise
-# the 'upgrade' subcommand, and shellcheck to enforce the project's lint gate.
+# For %%check: test_paddock.sh mocks podman/curl but still needs the real
+# jq/openssl/shellcheck for the 'upgrade' subcommand and the lint gate.
 BuildRequires:  ShellCheck
 BuildRequires:  jq
 BuildRequires:  openssl

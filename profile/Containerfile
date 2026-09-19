@@ -88,10 +88,9 @@ ENV HOME=/home/ai \
 
 WORKDIR /home/ai
 
-# `LABEL run` is intentionally not defined here: paddock.sh's run_label()
-# bakes it in at build time via `podman build --label`, so it can read
-# env-var-driven resource limits and an XDG-aware home path that a static
-# LABEL instruction cannot. See AGENTS.md, "The run label lives in paddock.sh".
+# `LABEL run` is intentionally not defined here; paddock.sh's run_label()
+# bakes it in at build time instead (see AGENTS.md, "The run label lives in
+# paddock.sh").
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash", "--login"]

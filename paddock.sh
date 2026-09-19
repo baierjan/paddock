@@ -4,8 +4,7 @@ set -eo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Paddock's own persistent, machine-local state: the sandbox home and a
-# personal Containerfile override. Honors XDG_DATA_HOME per the XDG Base
-# Directory spec.
+# personal Containerfile override.
 DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}/paddock"
 
 IMAGE="paddock:latest"
@@ -17,31 +16,18 @@ require_podman() {
     command -v podman >/dev/null 2>&1 || error "Podman is required but not installed."
 }
 
-# containerfile -- the Containerfile paddock builds. A personal override at
-# ~/.local/share/paddock/Containerfile takes precedence over the shipped
-# profile/Containerfile. This is the one customization point that works both
-# from a git checkout and from a packaged (read-only) install.
-containerfile() {
-    local override="${DATA_HOME}/Containerfile"
-    if [ -f "${override}" ]; then
-        echo "${override}"
-    else
-        echo "${ROOT_DIR}/profile/Containerfile"
-    fi
-}
-
-# resolved_containerfile -- containerfile(), rejecting a missing file.
+# resolved_containerfile -- the Containerfile paddock builds, rejecting a
+# missing file; see AGENTS.md, "The Containerfile is personally overridable".
 resolved_containerfile() {
-    local cf
-    cf="$(containerfile)"
+    local cf="${DATA_HOME}/Containerfile"
+    [ -f "${cf}" ] || cf="${ROOT_DIR}/profile/Containerfile"
     [ -f "${cf}" ] || error "Containerfile not found at ${cf}"
     echo "${cf}"
 }
 
 # run_label -- the `podman run ...` string baked into the image via
-# `podman build --label run=...`. Kept out of the Containerfile because it
-# needs to read host state a static LABEL instruction cannot: env-var-driven
-# resource limits, and an XDG-aware home path.
+# `podman build --label run=...`; see AGENTS.md, "The run label lives in
+# paddock.sh", for why it isn't a static Containerfile LABEL.
 run_label() {
     local ram="${PADDOCK_RAM_MIB:-8192}"
     local cpus="${PADDOCK_CPUS:-4}"
@@ -52,17 +38,8 @@ run_label() {
     [[ "${cpus}" =~ ^[0-9]+$ ]] || error "PADDOCK_CPUS must be a positive integer: '${cpus}'"
     [[ "${pids}" =~ ^[0-9]+$ ]] || error "PADDOCK_PIDS_LIMIT must be a positive integer: '${pids}'"
     [[ "${tmp_size}" =~ ^[0-9]+[kKmMgG]?$ ]] || error "PADDOCK_TMP_SIZE must be an integer optionally suffixed with k/m/g: '${tmp_size}'"
-    # $HOME/$PWD are spelled `$${}HOME`/`$${}PWD`, not plain or `\$`-escaped:
-    # `--label` reparses the value through Dockerfile's own environment
-    # substitution, which resolves a bare token at build time and doesn't
-    # let `\$`-escaping survive either. See AGENTS.md, "The run label lives
-    # in paddock.sh", for the full mechanism and the parser trace behind
-    # this specific spelling.
-    #
-    # Portable by default (podman resolves $HOME fresh per invocation). If
-    # XDG_DATA_HOME is itself $HOME plus a fixed suffix, only that suffix is
-    # baked in, keeping the portable token; otherwise the fully resolved
-    # path is baked in, since no $HOME-relative form exists to express it.
+    # $HOME/$PWD must stay spelled `$${}HOME`/`$${}PWD`, not plain or
+    # `\$`-escaped; see AGENTS.md, "The run label lives in paddock.sh", for why.
     # shellcheck disable=SC2016
     local home_volume='$${}HOME/.local/share/paddock/home'
     case "${XDG_DATA_HOME:-}" in
@@ -114,30 +91,14 @@ build() {
     podman build -t "${IMAGE}" -f "${cf}" --label "run=$(run_label)" "${ROOT_DIR}"
 }
 
-# baked_run_label -- the `run` label already stored on the built image, or
-# empty if the image or the label doesn't exist.
-baked_run_label() {
-    podman image inspect --format '{{index .Config.Labels "run"}}' "${IMAGE}" 2>/dev/null || echo ""
-}
-
 # ensure_image -- builds when the image is missing, or when its baked-in
-# `run` label no longer matches what run_label() would produce right now
-# (a PADDOCK_*/XDG_DATA_HOME override, or any paddock.sh change that affects
-# run_label()'s output). This does NOT detect a Containerfile/entrypoint.sh
-# edit that leaves run_label() unchanged -- run `paddock.sh build` explicitly
-# after editing those (an image's own `Created` time can't be used for that:
-# a fully cache-hit `podman build` reuses the existing image ID and never
-# bumps it, so a mtime-based staleness check could never self-heal).
-#
-# The comparison strips `run_label()`'s `$${}` boxing down to the single `$`
-# that podman's own --label reparse produces (see AGENTS.md, "The run label
-# lives in paddock.sh"), so it compares like for like against what's baked.
+# `run` label no longer matches run_label(); see AGENTS.md, "The run label
+# lives in paddock.sh", for why this doesn't use the image's `Created` time,
+# and why a plain Containerfile/entrypoint.sh edit needs an explicit `build`.
 ensure_image() {
     require_podman
-    # Validate unconditionally, even when the image already exists and needs
-    # no rebuild: the tag alone doesn't prove the Containerfile behind it
-    # (shipped or overridden) is still there -- e.g. an override could have
-    # been deleted since the image was last built.
+    # Validates even when no rebuild is needed; see AGENTS.md, "The
+    # Containerfile is personally overridable".
     resolved_containerfile > /dev/null
 
     if ! podman image exists "${IMAGE}"; then
@@ -147,7 +108,7 @@ ensure_image() {
     fi
 
     local baked current
-    baked="$(baked_run_label)"
+    baked="$(podman image inspect --format '{{index .Config.Labels "run"}}' "${IMAGE}" 2>/dev/null || echo "")"
     current="$(run_label)"
     current="${current//\$\${\}/\$}"
     if [ "${baked}" != "${current}" ]; then
@@ -157,7 +118,6 @@ ensure_image() {
 }
 
 run() {
-    # Build if the image is missing or its baked-in run label is out of date
     ensure_image
 
     # $PWD is mounted with a recursive SELinux relabel (:z) -- refuse anywhere too broad.
@@ -171,9 +131,7 @@ run() {
             error "Refusing to run from '${cwd}': it contains paddock's own state (${DATA_HOME}). cd into a project directory first." ;;
     esac
 
-    # The image's `LABEL run` owns every mount and security flag; this script
-    # deliberately keeps no second copy of them. It only pre-creates the host
-    # home directory so it is owned by the invoking user rather than by podman.
+    # Pre-created so it's owned by the invoking user, not by podman.
     local home_host="${DATA_HOME}/home"
     mkdir -p "${home_host}"
 
@@ -186,20 +144,14 @@ run() {
     podman container runlabel run "${IMAGE}"
 }
 
-# upgrade_assistants
-# Sniffs latest stable release versions from the NPM registry,
-# converts their SHA-512 Base64 hashes into Hex format, and updates
-# profile/Containerfile if newer versions are available.
 upgrade_assistants() {
     local cf
     cf="$(resolved_containerfile)"
 
-    # Verify required host tools
     command -v curl >/dev/null 2>&1 || error "curl is required on the host for upgrades."
     command -v jq >/dev/null 2>&1 || error "jq is required on the host for upgrades."
     command -v openssl >/dev/null 2>&1 || error "openssl is required on the host for upgrades."
 
-    # Parse current values from Containerfile
     local curr_gemini_ver
     curr_gemini_ver="$(grep "ARG GEMINI_CLI_VER=" "${cf}" | cut -d= -f2)" || \
         error "No 'ARG GEMINI_CLI_VER=' line found in ${cf}"
@@ -207,7 +159,6 @@ upgrade_assistants() {
     info "Checking for upgrades..."
     info "Current @google/gemini-cli: ${curr_gemini_ver}"
 
-    # Query latest stable version and metadata
     local gemini_json; gemini_json="$(curl -fsSL https://registry.npmjs.org/@google/gemini-cli/latest)"
     local latest_gemini_ver; latest_gemini_ver="$(echo "${gemini_json}" | jq -r .version)"
     # Reject a malformed version before it reaches sed and corrupts the Containerfile.

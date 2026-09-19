@@ -5,7 +5,7 @@ set -eo pipefail
 if [ "$(id -u)" = "0" ] && id ai >/dev/null 2>&1; then
     _uid="$(id -u ai)"
     _gid="$(id -g ai)"
-    _home="$(getent passwd ai | cut -d: -f6)"
+    _home="/home/ai"
     export HOME="$_home"
     export USER="ai"
     export LOGNAME="ai"
