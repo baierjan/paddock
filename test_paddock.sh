@@ -15,6 +15,12 @@ CONTAINERFILE="${ROOT_DIR}/profile/Containerfile"
 # shellcheck disable=SC2016
 LABEL='podman run --rm --interactive --tty --runtime krun --network pasta --annotation krun.use_passt=1 --annotation krun.ram_mib=8192 --annotation krun.cpus=4 --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=2048m --pids-limit 1024 --hostname paddock-latest --user ai --userns keep-id:uid=1000,gid=1000 --volume $${}HOME/.local/share/paddock/home:/home/ai:z --volume $${}PWD:/home/ai/sandbox:z --workdir /home/ai/sandbox paddock:latest'
 BUILD="podman build -t paddock:latest -f ${CONTAINERFILE} --label run=${LABEL} ${ROOT_DIR}"
+# What a real image's `.Config.Labels.run` would show: podman's own --label
+# reparse collapses `$${}` down to a single `$` (see run_label() in
+# paddock.sh) before it's ever stored on the image. This is the mock's
+# default "already up to date" answer for `image inspect`.
+BAKED_LABEL="${LABEL//\$\${\}/\$}"
+export BAKED_LABEL
 IMAGES="paddock:latest"
 
 # --- Lint gate ---------------------------------------------------------------
@@ -50,9 +56,11 @@ if [ "$1" = "image" ] && [ "$2" = "exists" ]; then
         *) exit 1 ;;
     esac
 fi
-# Image creation time for the staleness check; far future = always current.
+# The image's baked-in `run` label, for the run-label staleness check.
+# Defaults to the current, up-to-date label; a test sets MOCK_IMAGE_LABEL to
+# simulate an image built from a different run_label() (stale).
 if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
-    echo "${MOCK_IMAGE_EPOCH:-9999999999}"
+    echo "${MOCK_IMAGE_LABEL-${BAKED_LABEL}}"
     exit 0
 fi
 EOF
@@ -143,38 +151,20 @@ assert_fails() {
 
 echo "=== Running Paddock Tests ==="
 
-# --- build: build only what is missing or out of date ------------------------
+# --- build: unconditional, always (re)builds the image ------------------------
 
-# Test 1: a missing image is built
-echo "Test 1: build when the image is missing..."
-reset_log
-MOCK_IMAGES="" "${ROOT_DIR}/paddock.sh" build
-assert_log "${BUILD}" "Missing image is built"
-
-# Test 2: nothing to do when the image is current
-echo "Test 2: build when the image is current..."
+# Test 1: build always (re)builds the image, even though it already exists
+# and its baked-in label is current. There is no separate conditional
+# variant any more -- `run` is the only caller that checks first (below).
+echo "Test 1: build always (re)builds the image..."
 reset_log
 MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" build
-assert_no_log "podman build" "Nothing is rebuilt when up to date"
-
-# Test 3: an out-of-date image is rebuilt
-echo "Test 3: build when the image is older than its Containerfile..."
-reset_log
-MOCK_IMAGES="${IMAGES}" MOCK_IMAGE_EPOCH=0 "${ROOT_DIR}/paddock.sh" build
-assert_log "${BUILD}" "Stale image is rebuilt"
-
-# --- rebuild: always build, ignoring the staleness check ---------------------
-
-# Test 4: rebuild builds the image even though it is current
-echo "Test 4: rebuild when the image is current..."
-reset_log
-MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" rebuild
-assert_log "${BUILD}" "Rebuild forces the image"
+assert_log "${BUILD}" "'build' unconditionally (re)builds the image"
 
 # --- run: ensure the image, then delegate to the label -----------------------
 
-# Test 5: run prepares the home directory and delegates to runlabel
-echo "Test 5: run..."
+# Test 2: run prepares the home directory and delegates to runlabel
+echo "Test 2: run..."
 reset_log
 (cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run)
 assert_dir "${PADDOCK_HOME}" "Persistent home folder is created"
@@ -182,26 +172,37 @@ assert_no_log "podman build" "A current image is not rebuilt before running"
 assert_last_log "podman container runlabel run paddock:latest" \
     "Run delegates to 'podman container runlabel'"
 
-# Test 6: run builds first when the image is out of date
-echo "Test 6: run rebuilds a stale image before launching..."
+# Test 3: run builds first when the image's baked-in run label no longer
+# matches run_label() (e.g. a PADDOCK_* override changed since it was built).
+# MOCK_IMAGE_LABEL="" simulates that mismatch (also covers an older image
+# built before this label existed at all).
+echo "Test 3: run rebuilds when the baked-in run label is out of date..."
 reset_log
-(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" MOCK_IMAGE_EPOCH=0 "${ROOT_DIR}/paddock.sh" run)
-assert_log "${BUILD}" "Stale image is rebuilt before launching"
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" MOCK_IMAGE_LABEL="" "${ROOT_DIR}/paddock.sh" run)
+assert_log "${BUILD}" "Image with an out-of-date run label is rebuilt before launching"
 assert_last_log "podman container runlabel run paddock:latest" \
     "Launch still happens after the rebuild"
 
+# Test 4: run builds first when the image is missing outright
+echo "Test 4: run builds a missing image before launching..."
+reset_log
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="" "${ROOT_DIR}/paddock.sh" run)
+assert_log "${BUILD}" "Missing image is built before launching"
+assert_last_log "podman container runlabel run paddock:latest" \
+    "Launch still happens after the build"
+
 # --- error handling ----------------------------------------------------------
 
-# Test 7: an unknown action is rejected
-echo "Test 7: rejecting an unknown action..."
+# Test 5: an unknown action is rejected
+echo "Test 5: rejecting an unknown action..."
 assert_fails "'nosuch' is rejected" env MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" nosuch
 
 # --- personal override: ~/.local/share/paddock/Containerfile takes ----------
 # --- precedence over the shipped profile/Containerfile ----------------------
 
-# Test 8: a personal override takes precedence over the shipped Containerfile,
+# Test 6: a personal override takes precedence over the shipped Containerfile,
 # and still resolves to the same image tag and baked-in label.
-echo "Test 8: a personal override takes precedence over the shipped Containerfile..."
+echo "Test 6: a personal override takes precedence over the shipped Containerfile..."
 BUILD_OVERRIDE="podman build -t paddock:latest -f ${OVERRIDE_CF} --label run=${LABEL} ${ROOT_DIR}"
 mkdir -p "$(dirname "${OVERRIDE_CF}")"
 echo 'FROM registry.opensuse.org/opensuse/tumbleweed:latest' > "${OVERRIDE_CF}"
@@ -216,13 +217,13 @@ echo "PASS: personal override resolves and preserves tag naming"
 
 # --- the baked-in label is the only definition of the sandbox ----------------
 
-# Test 9: paddock.sh delegates every mount and security flag to `LABEL run`, so
+# Test 7: paddock.sh delegates every mount and security flag to `LABEL run`, so
 # the mock cannot observe them directly -- it only sees the `podman build
 # --label run=...` argument on the logged command line. Assert the
 # non-negotiable controls are present there.
 # Tunables (sizes, counts) are deliberately NOT pinned to a single value here
 # (Test 10 covers that they are overridable), only that the control exists.
-echo "Test 9: verifying security invariants in the baked-in run label..."
+echo "Test 7: verifying security invariants in the baked-in run label..."
 reset_log
 MOCK_IMAGES="" "${ROOT_DIR}/paddock.sh" build
 BAKED_LABEL="$(tail -n 1 "${MOCK_LOG}")"
@@ -257,9 +258,9 @@ do
 done
 echo "PASS: baked-in run label contains all required security flags"
 
-# Test 10: PADDOCK_RAM_MIB/CPUS/PIDS_LIMIT/TMP_SIZE override the defaults
+# Test 8: PADDOCK_RAM_MIB/CPUS/PIDS_LIMIT/TMP_SIZE override the defaults
 # baked into the run label at build time.
-echo "Test 10: resource limits are customizable via env vars..."
+echo "Test 8: resource limits are customizable via env vars..."
 reset_log
 MOCK_IMAGES="" \
     PADDOCK_RAM_MIB=4096 PADDOCK_CPUS=2 PADDOCK_PIDS_LIMIT=256 PADDOCK_TMP_SIZE=512m \
@@ -282,9 +283,9 @@ do
 done
 echo "PASS: resource limits are overridable via PADDOCK_* env vars"
 
-# Test 11: an XDG_DATA_HOME that is itself $HOME plus a fixed suffix keeps
+# Test 9: an XDG_DATA_HOME that is itself $HOME plus a fixed suffix keeps
 # the portable $${}HOME token -- only the suffix is baked in.
-echo "Test 11: a \$HOME-relative XDG_DATA_HOME keeps the portable \$HOME token..."
+echo "Test 9: a \$HOME-relative XDG_DATA_HOME keeps the portable \$HOME token..."
 reset_log
 MOCK_IMAGES="" XDG_DATA_HOME="${HOME}/xdg-data" \
     "${ROOT_DIR}/paddock.sh" build
@@ -300,9 +301,9 @@ case "${BAKED_LABEL}" in
         ;;
 esac
 
-# Test 12: a non-$HOME-relative XDG_DATA_HOME bakes in a fully resolved
+# Test 10: a non-$HOME-relative XDG_DATA_HOME bakes in a fully resolved
 # path instead, since there is no $HOME-relative form to express it.
-echo "Test 12: a non-\$HOME-relative XDG_DATA_HOME bakes in a resolved path..."
+echo "Test 10: a non-\$HOME-relative XDG_DATA_HOME bakes in a resolved path..."
 reset_log
 MOCK_IMAGES="" XDG_DATA_HOME="/mnt/xdg-data" \
     "${ROOT_DIR}/paddock.sh" build
@@ -325,13 +326,13 @@ case "${BAKED_LABEL}" in
     *) echo "PASS: the portable literal \$HOME token is gone once XDG_DATA_HOME points elsewhere" ;;
 esac
 
-# Test 13: ensure_image() validates the Containerfile even when the image
-# already exists -- an existing tag doesn't by itself prove the shipped
-# Containerfile is still there.
+# Test 11: build() validates the Containerfile even when the image already
+# exists -- an existing tag doesn't by itself prove the shipped Containerfile
+# is still there.
 #
-# Tests 13 and 14 both move/mutate the real shipped Containerfile. Restore it
-# on every exit path -- including a failing assertion under `set -e` -- or a
-# mid-test failure leaves the working tree without it.
+# Tests 11, 12 and 13 all move/mutate the real shipped Containerfile. Restore
+# it on every exit path -- including a failing assertion under `set -e` -- or
+# a mid-test failure leaves the working tree without it.
 restore_containerfile() {
     if [ -f "${CONTAINERFILE}.bak" ]; then
         mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
@@ -339,16 +340,23 @@ restore_containerfile() {
 }
 trap restore_containerfile EXIT
 
-echo "Test 13: a missing Containerfile is rejected even if the image exists..."
+echo "Test 11: a missing Containerfile is rejected even if the image exists..."
 mv "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
 assert_fails "'build' is rejected when the Containerfile is missing" \
     env MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" build
 mv "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
 
-# Test 14: upgrade updates Containerfile build variables safely
-echo "Test 14: upgrade assistants..."
-# Preserve mtime: a plain `cp` would make the restored file look newer than
-# the image built from it, forcing every subsequent build to look stale.
+# Test 12: ensure_image() (the path 'run' uses) validates the Containerfile
+# too, even when the image already exists AND its run label is current --
+# i.e. even when no rebuild would otherwise be triggered.
+echo "Test 12: 'run' is rejected when the Containerfile is missing..."
+mv "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
+assert_fails "'run' is rejected when the Containerfile is missing" \
+    env MOCK_IMAGES="${IMAGES}" bash -c "cd '${MOCK_WORKSPACE}' && '${ROOT_DIR}/paddock.sh' run"
+mv "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
+
+# Test 13: upgrade updates Containerfile build variables safely
+echo "Test 13: upgrade assistants..."
 cp -p "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
 
 # Run upgrade (will trigger upgrade for gemini-cli to the mock's default 0.99.0)
@@ -363,8 +371,8 @@ fi
 mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
 echo "PASS: upgrade successfully updates Containerfile parameters"
 
-# Test 15: upgrade refuses to downgrade when the registry's "latest" is older.
-echo "Test 15: upgrade refuses to downgrade..."
+# Test 14: upgrade refuses to downgrade when the registry's "latest" is older.
+echo "Test 14: upgrade refuses to downgrade..."
 cp -p "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
 
 UPGRADE_OUT="$(MOCK_GEMINI_VERSION=0.1.0 "${ROOT_DIR}/paddock.sh" upgrade)"
@@ -389,8 +397,8 @@ echo "PASS: upgrade refuses to downgrade an older registry version"
 
 # --- run: refuses to launch from a dangerous cwd -----------------------------
 
-# Test 16: run refuses to recursively SELinux-relabel $HOME.
-echo "Test 16: run refuses to launch from \$HOME..."
+# Test 15: run refuses to recursively SELinux-relabel $HOME.
+echo "Test 15: run refuses to launch from \$HOME..."
 assert_fails "'run' is rejected from \$HOME" \
     env MOCK_IMAGES="${IMAGES}" bash -c "cd '${HOME}' && '${ROOT_DIR}/paddock.sh' run"
 

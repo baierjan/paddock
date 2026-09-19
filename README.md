@@ -47,8 +47,8 @@ Unlike complex multi-bind sandboxes, Paddock utilizes a single plain **Container
 > The concrete limits (RAM, vCPU count, `/tmp` size, PID cap) are intentionally not
 > reproduced here. They are baked into the image at build time by `paddock.sh`
 > itself (see `run_label()`), overridable via `PADDOCK_RAM_MIB`, `PADDOCK_CPUS`,
-> `PADDOCK_PIDS_LIMIT` and `PADDOCK_TMP_SIZE`; `./paddock.sh rebuild` is required
-> for a changed env var to actually take effect.
+> `PADDOCK_PIDS_LIMIT` and `PADDOCK_TMP_SIZE`. `run` picks up a changed env var
+> automatically on its next invocation.
 
 ---
 
@@ -74,12 +74,10 @@ paddock/
 ```bash
 ./paddock.sh build
 ```
-`build` only does work when the image is missing or older than its `Containerfile` or `paddock.sh`
-itself. `run` performs the same check before launching, so an edit takes effect on the next run. To
-rebuild unconditionally:
-```bash
-./paddock.sh rebuild
-```
+`build` unconditionally (re)builds the image; run it again any time you edit the `Containerfile` or
+`entrypoint.sh`. `run` builds automatically too, but only when the image is missing or its baked-in
+run label is out of date (e.g. a `PADDOCK_*` env var changed) — it does not pick up a Containerfile
+edit on its own, so run `build` explicitly after one.
 
 #### Overriding the Containerfile
 The image can be personally customized without touching a tracked file: a

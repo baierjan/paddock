@@ -2,7 +2,6 @@
 set -eo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SELF="${ROOT_DIR}/$(basename "${BASH_SOURCE[0]}")"
 
 # Paddock's own persistent, machine-local state: the sandbox home and a
 # personal Containerfile override. Honors XDG_DATA_HOME per the XDG Base
@@ -105,29 +104,6 @@ run_label() {
     echo "${flags[*]}"
 }
 
-# image_epoch <tag> -- image creation time in seconds since the epoch, 0 if unknown.
-image_epoch() {
-    podman image inspect --format '{{.Created.Unix}}' "$1" 2>/dev/null || echo 0
-}
-
-# newest_epoch <file>... -- most recent mtime among the files that exist, 0 if none.
-newest_epoch() {
-    local newest=0 mtime file gnu_stat=0
-    stat --version 2>/dev/null | grep -q "GNU" && gnu_stat=1
-    for file in "$@"; do
-        [ -f "${file}" ] || continue
-        if [ "${gnu_stat}" = 1 ]; then
-            mtime="$(stat -c %Y "${file}" 2>/dev/null || echo 0)"
-        else
-            mtime="$(stat -f %m "${file}" 2>/dev/null || echo 0)"
-        fi
-        if [ "${mtime}" -gt "${newest}" ]; then
-            newest="${mtime}"
-        fi
-    done
-    echo "${newest}"
-}
-
 # build -- unconditional build of the image.
 build() {
     require_podman
@@ -138,36 +114,50 @@ build() {
     podman build -t "${IMAGE}" -f "${cf}" --label "run=$(run_label)" "${ROOT_DIR}"
 }
 
-# ensure_image -- rebuilds when the image is missing or older than its
-# inputs. Every mount and security flag lives in the image's `LABEL run`, so
-# an out-of-date image would otherwise keep silently applying the previous
-# limits; that label comes from run_label() in this very script, so
-# paddock.sh's own mtime (SELF) is an input too, alongside the Containerfile
-# and entrypoint.sh.
+# baked_run_label -- the `run` label already stored on the built image, or
+# empty if the image or the label doesn't exist.
+baked_run_label() {
+    podman image inspect --format '{{index .Config.Labels "run"}}' "${IMAGE}" 2>/dev/null || echo ""
+}
+
+# ensure_image -- builds when the image is missing, or when its baked-in
+# `run` label no longer matches what run_label() would produce right now
+# (a PADDOCK_*/XDG_DATA_HOME override, or any paddock.sh change that affects
+# run_label()'s output). This does NOT detect a Containerfile/entrypoint.sh
+# edit that leaves run_label() unchanged -- run `paddock.sh build` explicitly
+# after editing those (an image's own `Created` time can't be used for that:
+# a fully cache-hit `podman build` reuses the existing image ID and never
+# bumps it, so a mtime-based staleness check could never self-heal).
+#
+# The comparison strips `run_label()`'s `$${}` boxing down to the single `$`
+# that podman's own --label reparse produces (see AGENTS.md, "The run label
+# lives in paddock.sh"), so it compares like for like against what's baked.
 ensure_image() {
     require_podman
-    local cf reason=""
-    cf="$(resolved_containerfile)"
+    # Validate unconditionally, even when the image already exists and needs
+    # no rebuild: the tag alone doesn't prove the Containerfile behind it
+    # (shipped or overridden) is still there -- e.g. an override could have
+    # been deleted since the image was last built.
+    resolved_containerfile > /dev/null
 
     if ! podman image exists "${IMAGE}"; then
-        reason="is missing"
-    else
-        local built inputs
-        built="$(image_epoch "${IMAGE}")"
-        inputs="$(newest_epoch "${cf}" "${ROOT_DIR}/profile/entrypoint.sh" "${SELF}")"
-        if [ "${inputs}" -gt "${built}" ]; then
-            reason="is older than its Containerfile or paddock.sh"
-        fi
+        info "Image '${IMAGE}' is missing; building..."
+        build
+        return
     fi
 
-    if [ -n "${reason}" ]; then
-        info "Image '${IMAGE}' ${reason}; rebuilding..."
+    local baked current
+    baked="$(baked_run_label)"
+    current="$(run_label)"
+    current="${current//\$\${\}/\$}"
+    if [ "${baked}" != "${current}" ]; then
+        info "Image '${IMAGE}' run label is out of date; rebuilding..."
         build
     fi
 }
 
 run() {
-    # Build if the image is missing or its inputs have changed since it was built
+    # Build if the image is missing or its baked-in run label is out of date
     ensure_image
 
     # $PWD is mounted with a recursive SELinux relabel (:z) -- refuse anywhere too broad.
@@ -249,16 +239,15 @@ upgrade_assistants() {
 
         info "Successfully upgraded @google/gemini-cli in Containerfile!"
         info "To apply these changes, rebuild your image using:"
-        info "  ./paddock.sh rebuild"
+        info "  ./paddock.sh build"
     fi
 }
 
 # Main routing
 usage() {
-    echo "Usage: $0 {build|rebuild|run|upgrade}"
+    echo "Usage: $0 {build|run|upgrade}"
     echo "Examples:"
-    echo "  $0 build            # Build the image if it is missing or out of date"
-    echo "  $0 rebuild          # Force a rebuild, ignoring the staleness check"
+    echo "  $0 build            # Build (or rebuild) the image"
     echo "  $0 run              # Build if needed, then launch the sandbox"
     echo "  $0 upgrade          # Fetch latest assistants and update hashes"
     echo
@@ -286,9 +275,6 @@ fi
 
 case "${ACTION}" in
     build)
-        ensure_image
-        ;;
-    rebuild)
         build
         ;;
     run)
@@ -298,6 +284,6 @@ case "${ACTION}" in
         upgrade_assistants
         ;;
     *)
-        error "Unknown action '${ACTION}'. Use 'build', 'rebuild', 'run' or 'upgrade'."
+        error "Unknown action '${ACTION}'. Use 'build', 'run' or 'upgrade'."
         ;;
 esac

@@ -7,8 +7,7 @@ The entire project is Bash + Containerfiles: no package manager, no build system
 
 ```bash
 ./test_paddock.sh    # lint + tests; the only verification step
-./paddock.sh build   # build only if missing or out of date
-./paddock.sh rebuild # always build, ignoring the staleness check
+./paddock.sh build   # unconditionally (re)build the image
 ./paddock.sh run     # build if needed, then launch
 ./paddock.sh upgrade # fetch latest assistant versions, update Containerfile hashes
 podman container runlabel run paddock:latest   # equivalent, needs no checkout
@@ -34,15 +33,16 @@ enforces the gate.
   root — they are placed relative to `BASH_SOURCE`, not the CWD, so they land there wherever you
   invoke the suite from. `.gitignore` covers both — delete them before `git add` regardless.
 - Each test states its own preconditions via `MOCK_IMAGES` (space-separated tags that "exist") and
-  `MOCK_IMAGE_EPOCH` (image creation time; the far-future default means "current", `0` means
-  "stale"). There is no shared mock state and no ordering between tests — keep it that way rather
-  than reintroducing appended handlers.
+  `MOCK_IMAGE_LABEL` (the image's baked-in `run` label; defaults to the current, up-to-date one, so
+  the staleness check stays inert — set it, typically to `""`, to simulate a stale/labelless image).
+  There is no shared mock state and no ordering between tests — keep it that way rather than
+  reintroducing appended handlers.
 - `reset_log()` clears the mock log at the start of every test, so cross-test contamination isn't
-  the concern `assert_last_log` guards against. Tests 5 and 6 use it because a build can
-  legitimately precede the final action within a *single* test (e.g. Test 6 rebuilds a stale image
-  before launching it) — exact-match on the tail line proves the launch happened **last**, not
-  merely that it happened somewhere in that test's log.
-- Tests 9-12 read the run label off the logged `podman build ... --label run=...` command line
+  the concern `assert_last_log` guards against. Tests 2-4 use it because a build can legitimately
+  precede the final action within a *single* test (e.g. Test 3 rebuilds a stale image before
+  launching it) — exact-match on the tail line proves the launch happened **last**, not merely that
+  it happened somewhere in that test's log.
+- Tests 7-10 read the run label off the logged `podman build ... --label run=...` command line
   (`tail -n 1` of the mock log right after a `build`), not off a file — `run_label()` bakes it in
   via `podman build`, it is never written to the Containerfile. `$${}HOME`/`$${}PWD` inside it are
   asserted in that exact, unreparsed spelling (matched verbatim): that is what `run_label()`
@@ -50,19 +50,20 @@ enforces the gate.
   into literal `$HOME`/`$PWD` for `podman container runlabel` to expand later. See "The run label
   lives in paddock.sh" for why that specific spelling, and not a plain or `\$`-escaped
   `$HOME`/`$PWD`, is required.
-- The mock answers `image inspect` with `${MOCK_IMAGE_EPOCH:-9999999999}`, so images look current by
-  default and the staleness check stays inert. Tests 3 and 6 set `MOCK_IMAGE_EPOCH=0` to force the
-  rebuild path (build and run respectively); Tests 2 and 5 assert the opposite (no spurious
-  rebuild). Prefer that env var over touching file mtimes.
-- Test 8 creates and removes a real `Containerfile` under the mock `HOME`'s
+- The mock answers `image inspect` with `${MOCK_IMAGE_LABEL-${BAKED_LABEL}}` — `BAKED_LABEL` is
+  `LABEL` (the raw `run_label()` output test constant) with its `$${}` boxing collapsed to a single
+  `$`, mirroring podman's own `--label` reparse (see "The run label lives in paddock.sh"), so it's
+  what a real `image inspect` would actually show. Test 3 sets `MOCK_IMAGE_LABEL=""` to force the
+  rebuild path in `run`; Test 2 asserts the opposite (no spurious rebuild) with the default.
+- Test 6 creates and removes a real `Containerfile` under the mock `HOME`'s
   `.local/share/paddock/` to exercise the override described in "The Containerfile is personally
   overridable" below. Since `HOME` is redirected to `mock_home/` for the whole suite (see above),
   it never touches a real `~/.local/share/paddock/`; a failure mid-test leaves it under
   `mock_home/`, which is deleted along with it.
-- Tests 13 and 14 move/mutate the real shipped `profile/Containerfile` (not a mock copy). A
+- Tests 11, 12 and 13 all move/mutate the real shipped `profile/Containerfile` (not a mock copy). A
   `restore_containerfile` `trap ... EXIT` restores it on every exit path, including a failing
   assertion under `set -e` — without it, a failure mid-test would leave the working tree without
-  a Containerfile. Test 14 additionally needs the real `jq` and `openssl` (only `curl` is mocked).
+  a Containerfile. Test 13 additionally needs the real `jq` and `openssl` (only `curl` is mocked).
 
 ## The run label lives in paddock.sh
 
@@ -115,25 +116,30 @@ portability, since there is then no `$HOME`-relative form left to express.
 Consequences worth knowing:
 
 - **The limits are baked into the image**, so an out-of-date image would apply out-of-date limits.
-  `ensure_image()` guards this: `paddock.sh run` compares the image's creation time
-  (`podman image inspect --format '{{.Created.Unix}}'`) against the mtimes of the
-  `Containerfile`/`entrypoint.sh` *and `paddock.sh` itself* (`SELF`, since that is where the label
-  logic now lives), rebuilding if either is newer. `build` and `run` share this path; `rebuild`
-  skips the check and always builds. Editing `run_label()` therefore takes effect on the next
-  `build`/`run`, but a bare `podman container runlabel` does **not** get this and needs
-  `./paddock.sh rebuild`. Env vars alone (`PADDOCK_RAM_MIB` etc.) changing between runs does **not**
-  trigger a rebuild either — only a file mtime does — so a limit change via env var needs an
-  explicit `./paddock.sh rebuild` to actually take effect, same as an `upgrade`-updated `ARG` in
-  the Containerfile.
+  `ensure_image()` guards the `PADDOCK_*`/`XDG_DATA_HOME` part of this: `paddock.sh run` reads the
+  image's already-baked `run` label back (`podman image inspect --format
+  '{{index .Config.Labels "run"}}'`) and rebuilds if it no longer matches what `run_label()` would
+  produce right now. This deliberately does **not** use the image's own `Created` time — a fully
+  cache-hit `podman build` reuses the existing image ID and never bumps it, so a mtime-based
+  staleness check could go stale once and then never self-heal, rebuilding on every single `run`
+  forever. Comparing the label instead is idempotent: once rebuilt, the freshly baked label matches
+  `run_label()` again and `run` stops rebuilding.
+- **This does NOT cover a Containerfile/entrypoint.sh edit that leaves `run_label()`'s output
+  unchanged** (e.g. an `upgrade`-updated `ARG`, or any other change confined to the Containerfile).
+  There is deliberately no automatic detection for that any more — `build` and `rebuild` used to be
+  two separate commands (conditional vs. unconditional); they are now just one (`build`, always
+  unconditional), and picking up a Containerfile-only change is an explicit `./paddock.sh build`,
+  same as `upgrade`'s own follow-up instruction says. A bare `podman container runlabel` never
+  builds anything either way, mtime-based or not.
 - **The mock cannot see the flags.** Since podman resolves the label internally, `test_paddock.sh`
-  only observes `podman container runlabel run <tag>`. Test 9 therefore asserts the required
+  only observes `podman container runlabel run <tag>`. Test 7 therefore asserts the required
   controls textually against the `podman build --label run=...` argument on the logged command line
   (`--cap-drop ALL`, `--read-only`, `no-new-privileges`, `--user ai`, `--userns keep-id`, `noexec`
   on `/tmp`, `--network pasta`, `--runtime krun`, the presence of `--pids-limit` / `krun.ram_mib` /
-  `krun.cpus`). Test 10 that the four `PADDOCK_*` env vars actually change those values, Test 11
+  `krun.cpus`). Test 8 that the four `PADDOCK_*` env vars actually change those values, Test 9
   that a `$HOME`-relative `XDG_DATA_HOME` keeps the `$${}HOME` spelling and only bakes in the
-  suffix, Test 12 that a non-`$HOME`-relative one bakes in a fully resolved path instead. Add new
-  security flags to Test 9's list.
+  suffix, Test 10 that a non-`$HOME`-relative one bakes in a fully resolved path instead. Add new
+  security flags to Test 7's list.
 - `README.md` describes the flags **by name, with no numeric values**. Do not re-add concrete limits.
 
 `runlabel` expands only `$HOME`, `$PWD`, `$IMAGE`, `$NAME` and `$OPT1..3` (the last three via hidden
@@ -173,7 +179,7 @@ Worth knowing:
   changes, but that alone doesn't prove the Containerfile behind it (shipped or overridden) is still
   there — e.g. the override could have been deleted since the image was last built. `ensure_image()`
   checks for it unconditionally, before the "does the tag already exist" fast path, to close this.
-  Test 13 pins it by temporarily moving the shipped Containerfile aside.
+  Test 12 pins it by temporarily moving the shipped Containerfile aside.
 - **An override Containerfile still builds with the repo/install root as its context**
   (`podman build -f <containerfile> "$ROOT_DIR"` — see "Build context" under Architecture
   constraints). A `COPY` in an override resolves relative to `$ROOT_DIR`, not to the override's own
