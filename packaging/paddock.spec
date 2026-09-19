@@ -17,24 +17,22 @@
 
 
 Name:           paddock
-Version:        0.1.0
+Version:        0
 Release:        0
 Summary:        Hardened krun/microVM-backed Podman sandboxes for AI coding CLIs
 License:        Apache-2.0
 URL:            https://github.com/baierjan/paddock
-Source:         %{url}/archive/refs/tags/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
-Requires:       %{_bindir}/krun
-Requires:       %{_bindir}/pasta
-Requires:       %{_bindir}/podman
+Source:         %{name}-%{version}.tar.gz
 # For %check: test_paddock.sh is fully offline (podman/curl are shimmed via a
 # generated mock_bin/ on PATH) but still runs the real jq/openssl to exercise
 # the 'upgrade' subcommand, and shellcheck to enforce the project's lint gate.
 BuildRequires:  ShellCheck
 BuildRequires:  jq
 BuildRequires:  openssl
-# The image is pulled in unconditionally from the Google Cloud CLI's
-# x86_64-only yum repo (cloud-sdk-el10-x86_64).
-ExclusiveArch:  x86_64
+Requires:       %{_bindir}/krun
+Requires:       %{_bindir}/pasta
+Requires:       %{_bindir}/podman
+BuildArch:      noarch
 
 %description
 Paddock is a secure, lightweight, project-specific sandboxed runtime
@@ -56,7 +54,7 @@ guest RAM/vCPU/PID limits.
 %install
 install -Dm 0755 paddock.sh %{buildroot}%{_datadir}/%{name}/paddock.sh
 install -Dm 0644 profile/Containerfile %{buildroot}%{_datadir}/%{name}/profile/Containerfile
-install -Dm 0644 profile/entrypoint.sh %{buildroot}%{_datadir}/%{name}/profile/entrypoint.sh
+install -Dm 0755 profile/entrypoint.sh %{buildroot}%{_datadir}/%{name}/profile/entrypoint.sh
 
 cat > %{name}-wrapper <<'EOF'
 #!/bin/sh
