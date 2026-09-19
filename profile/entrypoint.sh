@@ -10,7 +10,9 @@ if [ "$(id -u)" = "0" ] && id ai >/dev/null 2>&1; then
     export USER="ai"
     export LOGNAME="ai"
     export TERM="${TERM:-xterm-256color}"
-    exec setpriv --reuid="${_uid}" --regid="${_gid}" --init-groups "$0" "$@"
+    exec setpriv --reuid="${_uid}" --regid="${_gid}" --init-groups \
+        --inh-caps=-all --bounding-set=-all --nnp \
+        "$0" "$@"
 fi
 
 exec "$@"

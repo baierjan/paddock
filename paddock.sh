@@ -14,7 +14,9 @@ IMAGE="paddock:latest"
 info() { echo -e "\033[1;34m[INFO]\033[0m $*"; }
 error() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; exit 1; }
 
-command -v podman >/dev/null 2>&1 || error "Podman is required but not installed."
+require_podman() {
+    command -v podman >/dev/null 2>&1 || error "Podman is required but not installed."
+}
 
 # containerfile -- the Containerfile paddock builds. A personal override at
 # ~/.local/share/paddock/Containerfile takes precedence over the shipped
@@ -46,6 +48,11 @@ run_label() {
     local cpus="${PADDOCK_CPUS:-4}"
     local pids="${PADDOCK_PIDS_LIMIT:-1024}"
     local tmp_size="${PADDOCK_TMP_SIZE:-2048m}"
+    # Unvalidated values here get shlex-split into podman's argv via --label.
+    [[ "${ram}" =~ ^[0-9]+$ ]] || error "PADDOCK_RAM_MIB must be a positive integer (MiB): '${ram}'"
+    [[ "${cpus}" =~ ^[0-9]+$ ]] || error "PADDOCK_CPUS must be a positive integer: '${cpus}'"
+    [[ "${pids}" =~ ^[0-9]+$ ]] || error "PADDOCK_PIDS_LIMIT must be a positive integer: '${pids}'"
+    [[ "${tmp_size}" =~ ^[0-9]+[kKmMgG]?$ ]] || error "PADDOCK_TMP_SIZE must be an integer optionally suffixed with k/m/g: '${tmp_size}'"
     # $HOME/$PWD are spelled `$${}HOME`/`$${}PWD`, not plain or `\$`-escaped:
     # `--label` reparses the value through Dockerfile's own environment
     # substitution, which resolves a bare token at build time and doesn't
@@ -123,6 +130,7 @@ newest_epoch() {
 
 # build -- unconditional build of the image.
 build() {
+    require_podman
     local cf
     cf="$(resolved_containerfile)"
 
@@ -137,6 +145,7 @@ build() {
 # paddock.sh's own mtime (SELF) is an input too, alongside the Containerfile
 # and entrypoint.sh.
 ensure_image() {
+    require_podman
     local cf reason=""
     cf="$(resolved_containerfile)"
 
@@ -160,6 +169,17 @@ ensure_image() {
 run() {
     # Build if the image is missing or its inputs have changed since it was built
     ensure_image
+
+    # $PWD is mounted with a recursive SELinux relabel (:z) -- refuse anywhere too broad.
+    local cwd; cwd="$(pwd)"
+    case "${cwd}" in
+        "/" | "${HOME}")
+            error "Refusing to run from '${cwd}': mounting it recursively SELinux-relabels your entire home or root filesystem. cd into a project directory first." ;;
+    esac
+    case "${DATA_HOME}" in
+        "${cwd}"/*)
+            error "Refusing to run from '${cwd}': it contains paddock's own state (${DATA_HOME}). cd into a project directory first." ;;
+    esac
 
     # The image's `LABEL run` owns every mount and security flag; this script
     # deliberately keeps no second copy of them. It only pre-creates the host
@@ -190,7 +210,9 @@ upgrade_assistants() {
     command -v openssl >/dev/null 2>&1 || error "openssl is required on the host for upgrades."
 
     # Parse current values from Containerfile
-    local curr_gemini_ver; curr_gemini_ver="$(grep "ARG GEMINI_CLI_VER=" "${cf}" | cut -d= -f2)"
+    local curr_gemini_ver
+    curr_gemini_ver="$(grep "ARG GEMINI_CLI_VER=" "${cf}" | cut -d= -f2)" || \
+        error "No 'ARG GEMINI_CLI_VER=' line found in ${cf}"
 
     info "Checking for upgrades..."
     info "Current @google/gemini-cli: ${curr_gemini_ver}"
@@ -202,11 +224,22 @@ upgrade_assistants() {
     [[ "${latest_gemini_ver}" =~ ^[0-9]+(\.[0-9]+)+([-.][0-9A-Za-z.]+)?$ ]] || \
         error "Unexpected version string from registry: '${latest_gemini_ver}'"
 
-    if [ "${latest_gemini_ver}" != "${curr_gemini_ver}" ]; then
+    local newest
+    newest="$(printf '%s\n%s\n' "${curr_gemini_ver}" "${latest_gemini_ver}" | sort -V | tail -n1)"
+
+    if [ "${latest_gemini_ver}" = "${curr_gemini_ver}" ]; then
+        info "@google/gemini-cli is already up to date!"
+    elif [ "${newest}" != "${latest_gemini_ver}" ]; then
+        info "Registry version (${latest_gemini_ver}) is older than the pinned version (${curr_gemini_ver}); not downgrading."
+    else
         info "New @google/gemini-cli version found: ${latest_gemini_ver}"
         local gemini_integrity; gemini_integrity="$(echo "${gemini_json}" | jq -r .dist.integrity)"
+        [[ "${gemini_integrity}" == sha512-* ]] || \
+            error "Registry integrity hash is not sha512-prefixed: '${gemini_integrity}'"
         local gemini_b64="${gemini_integrity#sha512-}"
         local new_gemini_hash; new_gemini_hash="$(echo -n "${gemini_b64}" | openssl enc -base64 -d -A | od -An -tx1 | tr -d ' \n')"
+        [[ "${new_gemini_hash}" =~ ^[0-9a-f]{128}$ ]] || \
+            error "Decoded hash is not a 128-char sha512 digest: '${new_gemini_hash}'"
 
         info "Updating ${cf}..."
         sed \
@@ -217,8 +250,6 @@ upgrade_assistants() {
         info "Successfully upgraded @google/gemini-cli in Containerfile!"
         info "To apply these changes, rebuild your image using:"
         info "  ./paddock.sh rebuild"
-    else
-        info "@google/gemini-cli is already up to date!"
     fi
 }
 

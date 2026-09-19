@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MOCK_BIN="${ROOT_DIR}/mock_bin"
 MOCK_LOG="$(mktemp)"
 export MOCK_LOG
+# A stand-in project dir for `run` tests -- ROOT_DIR itself becomes an ancestor of DATA_HOME below.
+MOCK_WORKSPACE="${ROOT_DIR}/mock_workspace"
 CONTAINERFILE="${ROOT_DIR}/profile/Containerfile"
 # The exact flattened label run_label() produces with no PADDOCK_*/
 # XDG_DATA_HOME overrides set. `$${}HOME`/`$${}PWD` appear as raw argv here,
@@ -32,7 +34,7 @@ else
 fi
 
 # Setup mock environment
-mkdir -p "${MOCK_BIN}"
+mkdir -p "${MOCK_BIN}" "${MOCK_WORKSPACE}"
 : > "${MOCK_LOG}"
 
 # Create mock podman command. Both stubbed queries are driven by environment
@@ -56,13 +58,13 @@ fi
 EOF
 chmod +x "${MOCK_BIN}/podman"
 
-# Create mock curl command to simulate offline NPM registry responses
+# Create mock curl command; "latest" is MOCK_GEMINI_VERSION (default 0.99.0), an upgrade over every pinned version here.
 cat << 'EOF' > "${MOCK_BIN}/curl"
 #!/bin/bash
 # Check which package's latest metadata is requested
 if [[ "$*" == *"@google/gemini-cli/latest"* ]]; then
-    # Return simulated payload with an upgraded mock version 0.55.0
-    echo '{"version":"0.55.0","dist":{"tarball":"https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-0.55.0.tgz","integrity":"sha512-Olber5MK116YhYzdSn0/UPNo3rbxj4CJEgSBARIELwKFm1NHGJ4Fc7kMjvEPPLtxip0Aki8xUM28HG4sQ2GE0g=="}}'
+    ver="${MOCK_GEMINI_VERSION:-0.99.0}"
+    echo "{\"version\":\"${ver}\",\"dist\":{\"tarball\":\"https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-${ver}.tgz\",\"integrity\":\"sha512-Olber5MK116YhYzdSn0/UPNo3rbxj4CJEgSBARIELwKFm1NHGJ4Fc7kMjvEPPLtxip0Aki8xUM28HG4sQ2GE0g==\"}}"
 else
     /usr/bin/curl "$@"
 fi
@@ -71,9 +73,10 @@ chmod +x "${MOCK_BIN}/curl"
 
 export PATH="${MOCK_BIN}:${PATH}"
 
-# Ensure XDG variables are unset for deterministic test paths
+# Ensure XDG/PADDOCK variables are unset for deterministic test paths
 unset XDG_DATA_HOME
 unset XDG_CONFIG_HOME
+unset PADDOCK_RAM_MIB PADDOCK_CPUS PADDOCK_PIDS_LIMIT PADDOCK_TMP_SIZE
 
 # Override HOME to verify home directory creation
 export HOME="${ROOT_DIR}/mock_home"
@@ -173,7 +176,7 @@ assert_log "${BUILD}" "Rebuild forces the image"
 # Test 5: run prepares the home directory and delegates to runlabel
 echo "Test 5: run..."
 reset_log
-MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run)
 assert_dir "${PADDOCK_HOME}" "Persistent home folder is created"
 assert_no_log "podman build" "A current image is not rebuilt before running"
 assert_last_log "podman container runlabel run paddock:latest" \
@@ -182,7 +185,7 @@ assert_last_log "podman container runlabel run paddock:latest" \
 # Test 6: run builds first when the image is out of date
 echo "Test 6: run rebuilds a stale image before launching..."
 reset_log
-MOCK_IMAGES="${IMAGES}" MOCK_IMAGE_EPOCH=0 "${ROOT_DIR}/paddock.sh" run
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" MOCK_IMAGE_EPOCH=0 "${ROOT_DIR}/paddock.sh" run)
 assert_log "${BUILD}" "Stale image is rebuilt before launching"
 assert_last_log "podman container runlabel run paddock:latest" \
     "Launch still happens after the rebuild"
@@ -348,19 +351,50 @@ echo "Test 14: upgrade assistants..."
 # the image built from it, forcing every subsequent build to look stale.
 cp -p "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
 
-# Run upgrade (will trigger upgrade for gemini-cli to 0.55.0)
+# Run upgrade (will trigger upgrade for gemini-cli to the mock's default 0.99.0)
 "${ROOT_DIR}/paddock.sh" upgrade
 
 # Assert the Containerfile variables are correctly updated
-if ! grep -q "ARG GEMINI_CLI_VER=0.55.0" "${CONTAINERFILE}"; then
-    echo "FAIL: GEMINI_CLI_VER was not updated to 0.55.0" >&2
+if ! grep -q "ARG GEMINI_CLI_VER=0.99.0" "${CONTAINERFILE}"; then
+    echo "FAIL: GEMINI_CLI_VER was not updated to 0.99.0" >&2
     exit 1
 fi
 
 mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
 echo "PASS: upgrade successfully updates Containerfile parameters"
 
+# Test 15: upgrade refuses to downgrade when the registry's "latest" is older.
+echo "Test 15: upgrade refuses to downgrade..."
+cp -p "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
+
+UPGRADE_OUT="$(MOCK_GEMINI_VERSION=0.1.0 "${ROOT_DIR}/paddock.sh" upgrade)"
+
+if grep -q "ARG GEMINI_CLI_VER=0.1.0" "${CONTAINERFILE}"; then
+    echo "FAIL: upgrade downgraded GEMINI_CLI_VER to 0.1.0" >&2
+    mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
+    exit 1
+fi
+case "${UPGRADE_OUT}" in
+    *"not downgrading"*) ;;
+    *)
+        echo "FAIL: upgrade did not report refusing to downgrade" >&2
+        echo "  output: ${UPGRADE_OUT}" >&2
+        mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
+        exit 1
+        ;;
+esac
+
+mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
+echo "PASS: upgrade refuses to downgrade an older registry version"
+
+# --- run: refuses to launch from a dangerous cwd -----------------------------
+
+# Test 16: run refuses to recursively SELinux-relabel $HOME.
+echo "Test 16: run refuses to launch from \$HOME..."
+assert_fails "'run' is rejected from \$HOME" \
+    env MOCK_IMAGES="${IMAGES}" bash -c "cd '${HOME}' && '${ROOT_DIR}/paddock.sh' run"
+
 echo "=== All Paddock Tests Passed Successfully ==="
 
 # Cleanup
-rm -rf "${MOCK_BIN}" "${MOCK_LOG}" "${HOME}"
+rm -rf "${MOCK_BIN}" "${MOCK_LOG}" "${MOCK_WORKSPACE}" "${HOME}"

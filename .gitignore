@@ -1,3 +1,4 @@
 # test_paddock.sh scratch directories, left behind on a failed run.
 /mock_bin/
 /mock_home/
+/mock_workspace/
