@@ -10,6 +10,7 @@ The entire project is Bash + Containerfiles: no package manager, no build system
 ./paddock.sh build   # build only if missing or out of date
 ./paddock.sh rebuild # always build, ignoring the staleness check
 ./paddock.sh run     # build if needed, then launch
+./paddock.sh upgrade # fetch latest assistant versions, update Containerfile hashes
 podman container runlabel run paddock:latest   # equivalent, needs no checkout
 ```
 
@@ -58,6 +59,10 @@ enforces the gate.
   overridable" below. Since `HOME` is redirected to `mock_home/` for the whole suite (see above),
   it never touches a real `~/.local/share/paddock/`; a failure mid-test leaves it under
   `mock_home/`, which is deleted along with it.
+- Tests 13 and 14 move/mutate the real shipped `profile/Containerfile` (not a mock copy). A
+  `restore_containerfile` `trap ... EXIT` restores it on every exit path, including a failing
+  assertion under `set -e` — without it, a failure mid-test would leave the working tree without
+  a Containerfile. Test 14 additionally needs the real `jq` and `openssl` (only `curl` is mocked).
 
 ## The run label lives in paddock.sh
 

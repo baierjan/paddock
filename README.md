@@ -6,7 +6,7 @@
   </picture>
 </p>
 
-**Paddock** is a secure, lightweight, project-specific sandboxed runtime container environment designed to run AI coding assistants (such as OpenCode, Gemini CLI, and Claude Code) in complete, virtualized isolation from your host system.
+**Paddock** is a secure, lightweight, project-specific sandboxed runtime container environment designed to run AI coding assistants (such as OpenCode and Gemini CLI) in complete, virtualized isolation from your host system.
 
 Unlike complex multi-bind sandboxes, Paddock utilizes a single plain **Containerfile** and a **Pristine Home Directory** strategy to provide 100% transparent and standard host bind-mounting under a highly hardened, VM-level virtualization boundary.
 
@@ -59,6 +59,8 @@ paddock/
 ├── profile/
 │   ├── entrypoint.sh       # Secure guest VM privilege-dropping entrypoint
 │   └── Containerfile       # Builds 'paddock:latest'
+├── packaging/              # OBS/RPM packaging (spec, changes)
+├── docs/                   # Branding assets used by this README
 ├── paddock.sh              # Simple execution/orchestration shell script
 ├── test_paddock.sh         # Automated mock-based test suite
 └── README.md

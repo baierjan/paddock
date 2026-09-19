@@ -100,10 +100,11 @@ image_epoch() {
 
 # newest_epoch <file>... -- most recent mtime among the files that exist, 0 if none.
 newest_epoch() {
-    local newest=0 mtime file
+    local newest=0 mtime file gnu_stat=0
+    stat --version 2>/dev/null | grep -q "GNU" && gnu_stat=1
     for file in "$@"; do
         [ -f "${file}" ] || continue
-        if stat --version 2>/dev/null | grep -q "GNU"; then
+        if [ "${gnu_stat}" = 1 ]; then
             mtime="$(stat -c %Y "${file}" 2>/dev/null || echo 0)"
         else
             mtime="$(stat -f %m "${file}" 2>/dev/null || echo 0)"
@@ -220,9 +221,7 @@ upgrade_assistants() {
 }
 
 # Main routing
-ACTION="$1"
-
-if [ -z "${ACTION}" ] || [ "${ACTION}" = "help" ] || [ "${ACTION}" = "--help" ] || [ "${ACTION}" = "-h" ]; then
+usage() {
     echo "Usage: $0 {build|rebuild|run|upgrade}"
     echo "Examples:"
     echo "  $0 build            # Build the image if it is missing or out of date"
@@ -238,6 +237,17 @@ if [ -z "${ACTION}" ] || [ "${ACTION}" = "help" ] || [ "${ACTION}" = "--help" ] 
     echo "PADDOCK_PIDS_LIMIT and PADDOCK_TMP_SIZE (defaults: 8192, 4, 1024, 2048m)."
     echo "XDG_DATA_HOME, if set, is baked in as the sandbox home's location instead"
     echo "of the portable default \$HOME/.local/share/paddock."
+}
+
+ACTION="$1"
+
+if [ "${ACTION}" = "help" ] || [ "${ACTION}" = "--help" ] || [ "${ACTION}" = "-h" ]; then
+    usage
+    exit 0
+fi
+
+if [ -z "${ACTION}" ]; then
+    usage
     exit 1
 fi
 
