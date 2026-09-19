@@ -3,12 +3,14 @@ set -eo pipefail
 
 # Determine directories
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROFILES_DIR="${ROOT_DIR}/profiles"
 SELF="${ROOT_DIR}/$(basename "${BASH_SOURCE[0]}")"
 
-# Paddock's own persistent, machine-local state: sandbox homes and personal
-# profile overrides. Honors XDG_DATA_HOME per the XDG Base Directory spec.
+# Paddock's own persistent, machine-local state: the sandbox home and a
+# personal Containerfile override. Honors XDG_DATA_HOME per the XDG Base
+# Directory spec.
 DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}/paddock"
+
+IMAGE="paddock:latest"
 
 # Colors for output
 info() { echo -e "\033[1;34m[INFO]\033[0m $*"; }
@@ -17,38 +19,24 @@ error() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; exit 1; }
 # Helper: check for podman
 command -v podman >/dev/null 2>&1 || error "Podman is required but not installed."
 
-# image_tag <profile> -- the image name a profile builds to.
-image_tag() {
-    case "$1" in
-        base) echo "paddock-base:latest" ;;
-        default) echo "paddock:latest" ;;
-        *) echo "paddock:$1" ;;
-    esac
-}
-
-# containerfile_for <profile> -- the Containerfile that backs a profile name.
-# A personal override at ~/.local/share/paddock/profiles/<profile>/Containerfile
-# takes precedence over the shipped profiles/<profile>/Containerfile, for every
-# profile name (including "base"). This is the one customization point that
-# works both from a git checkout and from a packaged (read-only) install.
-containerfile_for() {
-    local override="${DATA_HOME}/profiles/$1/Containerfile"
+# containerfile -- the Containerfile paddock builds. A personal override at
+# ~/.local/share/paddock/Containerfile takes precedence over the shipped
+# profile/Containerfile. This is the one customization point that works both
+# from a git checkout and from a packaged (read-only) install.
+containerfile() {
+    local override="${DATA_HOME}/Containerfile"
     if [ -f "${override}" ]; then
         echo "${override}"
     else
-        echo "${PROFILES_DIR}/$1/Containerfile"
+        echo "${ROOT_DIR}/profile/Containerfile"
     fi
 }
 
-# run_label_for <profile> -- the `podman run ...` string to bake into a
-# recognized, first-party profile's image via `podman build --label run=...`.
-# Kept out of the Containerfile because it needs to read host state a static
-# LABEL instruction cannot: env-var-driven resource limits, and an
-# XDG-aware home path. An unrecognized profile name -- every personal
-# override included -- gets nothing back: build_profile() then leaves
-# whatever LABEL run its own Containerfile defines (if any) untouched.
-run_label_for() {
-    local profile="$1"
+# run_label -- the `podman run ...` string baked into the image via
+# `podman build --label run=...`. Kept out of the Containerfile because it
+# needs to read host state a static LABEL instruction cannot: env-var-driven
+# resource limits, and an XDG-aware home path.
+run_label() {
     local ram="${PADDOCK_RAM_MIB:-8192}"
     local cpus="${PADDOCK_CPUS:-4}"
     local pids="${PADDOCK_PIDS_LIMIT:-1024}"
@@ -56,57 +44,53 @@ run_label_for() {
     # $HOME/$PWD are spelled `$${}HOME`/`$${}PWD`, not plain or `\$`-escaped:
     # `--label` reparses the value through Dockerfile's own environment
     # substitution, which resolves a bare token at build time and doesn't
-    # let `\$`-escaping survive either. See AGENTS.md, "The run label has
-    # exactly one home per profile", for the full mechanism and the parser
-    # trace behind this specific spelling.
+    # let `\$`-escaping survive either. See AGENTS.md, "The run label lives
+    # in paddock.sh", for the full mechanism and the parser trace behind
+    # this specific spelling.
     #
     # Portable by default (podman resolves $HOME fresh per invocation). If
     # XDG_DATA_HOME is itself $HOME plus a fixed suffix, only that suffix is
     # baked in, keeping the portable token; otherwise the fully resolved
     # path is baked in, since no $HOME-relative form exists to express it.
     # shellcheck disable=SC2016
-    local home_volume='$${}HOME/.local/share/paddock/homes/default'
+    local home_volume='$${}HOME/.local/share/paddock/home'
     case "${XDG_DATA_HOME:-}" in
         "")
             ;;
         "${HOME}" | "${HOME}"/*)
             # shellcheck disable=SC2016
-            home_volume="\$\${}HOME${XDG_DATA_HOME#"${HOME}"}/paddock/homes/default"
+            home_volume="\$\${}HOME${XDG_DATA_HOME#"${HOME}"}/paddock/home"
             ;;
         *)
-            home_volume="${DATA_HOME}/homes/default"
+            home_volume="${DATA_HOME}/home"
             ;;
     esac
     # shellcheck disable=SC2016
     local pwd_volume='$${}PWD'
 
-    case "${profile}" in
-        default)
-            # Array elements, not a string: the indentation is inter-word
-            # whitespace, so it can't leak into the joined value below.
-            local -a flags=(
-                podman run --rm --interactive --tty
-                --runtime krun
-                --network pasta
-                --annotation krun.use_passt=1
-                "--annotation krun.ram_mib=${ram}"
-                "--annotation krun.cpus=${cpus}"
-                --cap-drop ALL
-                --security-opt no-new-privileges
-                --read-only
-                "--tmpfs /tmp:rw,noexec,nosuid,nodev,size=${tmp_size}"
-                "--pids-limit ${pids}"
-                --hostname paddock-latest
-                --user ai
-                "--userns keep-id:uid=1000,gid=1000"
-                "--volume ${home_volume}:/home/ai:z"
-                "--volume ${pwd_volume}:/home/ai/sandbox:z"
-                --workdir /home/ai/sandbox
-                paddock:latest
-            )
-            echo "${flags[*]}"
-            ;;
-    esac
+    # Array elements, not a string: the indentation is inter-word
+    # whitespace, so it can't leak into the joined value below.
+    local -a flags=(
+        podman run --rm --interactive --tty
+        --runtime krun
+        --network pasta
+        --annotation krun.use_passt=1
+        "--annotation krun.ram_mib=${ram}"
+        "--annotation krun.cpus=${cpus}"
+        --cap-drop ALL
+        --security-opt no-new-privileges
+        --read-only
+        "--tmpfs /tmp:rw,noexec,nosuid,nodev,size=${tmp_size}"
+        "--pids-limit ${pids}"
+        --hostname paddock-latest
+        --user ai
+        "--userns keep-id:uid=1000,gid=1000"
+        "--volume ${home_volume}:/home/ai:z"
+        "--volume ${pwd_volume}:/home/ai/sandbox:z"
+        --workdir /home/ai/sandbox
+        "${IMAGE}"
+    )
+    echo "${flags[*]}"
 }
 
 # image_epoch <tag> -- image creation time in seconds since the epoch, 0 if unknown.
@@ -131,114 +115,70 @@ newest_epoch() {
     echo "${newest}"
 }
 
-# assert_profile <profile> -- abort unless the profile has a Containerfile.
-assert_profile() {
+# build -- unconditional build of the image.
+build() {
     local cf
-    cf="$(containerfile_for "$1")"
-    [ -f "${cf}" ] || error "Profile '$1' not found at ${cf}"
+    cf="$(containerfile)"
+    [ -f "${cf}" ] || error "Containerfile not found at ${cf}"
+
+    info "Building image '${IMAGE}'..."
+    podman build -t "${IMAGE}" -f "${cf}" --label "run=$(run_label)" "${ROOT_DIR}"
 }
 
-# build_profile <profile>
-# Unconditional build of a single image, and the single point at which an
-# unknown profile is rejected. Dependency ordering is the caller's job, so that
-# base is refreshed exactly once per invocation.
-build_profile() {
-    local profile="$1" tag cf label
-    assert_profile "${profile}"
-    tag="$(image_tag "${profile}")"
-    cf="$(containerfile_for "${profile}")"
-    label="$(run_label_for "${profile}")"
-
-    info "Building image '${tag}'..."
-    if [ -n "${label}" ]; then
-        podman build -t "${tag}" -f "${cf}" --label "run=${label}" "${ROOT_DIR}"
-    else
-        podman build -t "${tag}" -f "${cf}" "${ROOT_DIR}"
-    fi
-}
-
-# ensure_image <profile>
-# Rebuilds when the image is missing or older than its inputs. Every mount and
-# security flag lives in the image's `LABEL run`, so an out-of-date image would
-# otherwise keep silently applying the previous limits. For a recognized
-# profile that label comes from run_label_for() in this very script, so
+# ensure_image -- rebuilds when the image is missing or older than its
+# inputs. Every mount and security flag lives in the image's `LABEL run`, so
+# an out-of-date image would otherwise keep silently applying the previous
+# limits; that label comes from run_label() in this very script, so
 # paddock.sh's own mtime (SELF) is an input too, alongside the Containerfile
 # and entrypoint.sh.
 ensure_image() {
-    local profile="$1" tag cf reason="" built inputs
-    # Validate the profile even if its image already exists and is current:
-    # an existing tag doesn't by itself prove the Containerfile behind it
-    # (shipped or personally overridden) still exists.
-    assert_profile "${profile}"
-    tag="$(image_tag "${profile}")"
-    cf="$(containerfile_for "${profile}")"
+    local cf reason=""
+    cf="$(containerfile)"
+    [ -f "${cf}" ] || error "Containerfile not found at ${cf}"
 
-    # A profile is built FROM the base image, so bring that up to date first.
-    if [ "${profile}" != "base" ]; then
-        ensure_image "base"
-    fi
-
-    if ! podman image exists "${tag}"; then
+    if ! podman image exists "${IMAGE}"; then
         reason="is missing"
     else
-        built="$(image_epoch "${tag}")"
-        inputs="$(newest_epoch "${cf}" "$(dirname "${cf}")/entrypoint.sh" "${SELF}")"
+        local built inputs
+        built="$(image_epoch "${IMAGE}")"
+        inputs="$(newest_epoch "${cf}" "${ROOT_DIR}/profile/entrypoint.sh" "${SELF}")"
         if [ "${inputs}" -gt "${built}" ]; then
             reason="is older than its Containerfile or paddock.sh"
-        elif [ "${profile}" != "base" ] && [ "$(image_epoch "$(image_tag base)")" -gt "${built}" ]; then
-            reason="is older than paddock-base:latest"
         fi
     fi
 
     if [ -n "${reason}" ]; then
-        info "Image '${tag}' ${reason}; rebuilding..."
-        build_profile "${profile}"
+        info "Image '${IMAGE}' ${reason}; rebuilding..."
+        build
     fi
 }
 
-# rebuild_profile <profile>
-# Unconditional rebuild of the profile and, for non-base profiles, its base.
-rebuild_profile() {
-    local profile="$1"
-    if [ "${profile}" != "base" ]; then
-        build_profile "base"
-    fi
-    build_profile "${profile}"
-}
-
-run_profile() {
-    local profile="$1" tag
-    tag="$(image_tag "${profile}")"
-
-    # `base` is an abstract parent image; it carries no `LABEL run` and is not
-    # meant to be entered directly.
-    [ "${profile}" = "base" ] && error "Profile 'base' is an abstract base image and cannot be run directly."
-
+run() {
     # Build if the image is missing or its inputs have changed since it was built
-    ensure_image "${profile}"
+    ensure_image
 
-    # The profile's `LABEL run` owns every mount and security flag; this script
+    # The image's `LABEL run` owns every mount and security flag; this script
     # deliberately keeps no second copy of them. It only pre-creates the host
     # home directory so it is owned by the invoking user rather than by podman.
-    local home_host="${DATA_HOME}/homes/default"
+    local home_host="${DATA_HOME}/home"
     mkdir -p "${home_host}"
 
     # Listed in mount order: the home volume lands on /home/ai first, then the
     # workspace is mounted at /home/ai/sandbox inside it.
-    info "Launching profile '${profile}' via 'podman container runlabel'..."
+    info "Launching sandbox via 'podman container runlabel'..."
     info "Home directory: ${home_host} -> /home/ai"
     info "Workspace: $(pwd) -> /home/ai/sandbox"
 
-    podman container runlabel run "${tag}"
+    podman container runlabel run "${IMAGE}"
 }
 
 # upgrade_assistants
 # Sniffs latest stable release versions from the NPM registry,
 # converts their SHA-512 Base64 hashes into Hex format, and updates
-# profiles/base/Containerfile if newer versions are available.
+# profile/Containerfile if newer versions are available.
 upgrade_assistants() {
-    local cf="${PROFILES_DIR}/base/Containerfile"
-    [ -f "${cf}" ] || error "Base Containerfile not found at ${cf}"
+    local cf="${ROOT_DIR}/profile/Containerfile"
+    [ -f "${cf}" ] || error "Containerfile not found at ${cf}"
 
     # Verify required host tools
     command -v curl >/dev/null 2>&1 || error "curl is required on the host for upgrades."
@@ -296,8 +236,8 @@ upgrade_assistants() {
           "${cf}" > "${cf}.tmp" && mv "${cf}.tmp" "${cf}"
 
         info "Successfully upgraded assistants in Containerfile!"
-        info "To apply these changes, rebuild your base image using:"
-        info "  ./paddock.sh rebuild base"
+        info "To apply these changes, rebuild your image using:"
+        info "  ./paddock.sh rebuild"
     else
         info "All AI assistants are already up to date!"
     fi
@@ -305,36 +245,35 @@ upgrade_assistants() {
 
 # Main routing
 ACTION="$1"
-PROFILE="${2:-default}"
 
 if [ -z "${ACTION}" ] || [ "${ACTION}" = "help" ] || [ "${ACTION}" = "--help" ] || [ "${ACTION}" = "-h" ]; then
-    echo "Usage: $0 {build|rebuild|run|upgrade} [profile]   (profile defaults to 'default')"
+    echo "Usage: $0 {build|rebuild|run|upgrade}"
     echo "Examples:"
-    echo "  $0 build            # Build the profile if it is missing or out of date"
-    echo "  $0 rebuild base     # Force a rebuild, ignoring the staleness check"
+    echo "  $0 build            # Build the image if it is missing or out of date"
+    echo "  $0 rebuild          # Force a rebuild, ignoring the staleness check"
     echo "  $0 run              # Build if needed, then launch the sandbox"
     echo "  $0 upgrade          # Fetch latest assistants and update hashes"
     echo
-    echo "'default' always builds/runs as tag 'paddock:latest'. Any profile can be"
-    echo "personally overridden via ~/.local/share/paddock/profiles/<profile>/Containerfile,"
-    echo "which takes precedence over the shipped profiles/<profile>/Containerfile."
+    echo "The image can be personally overridden via a Containerfile at"
+    echo "\$HOME/.local/share/paddock/Containerfile, which takes precedence over"
+    echo "the shipped profile/Containerfile."
     echo
-    echo "For 'default', resource limits are set at build time via PADDOCK_RAM_MIB,"
-    echo "PADDOCK_CPUS, PADDOCK_PIDS_LIMIT and PADDOCK_TMP_SIZE (defaults: 8192, 4,"
-    echo "1024, 2048m). XDG_DATA_HOME, if set, is baked in as the sandbox home's"
-    echo "location instead of the portable default \$HOME/.local/share/paddock."
+    echo "Resource limits are set at build time via PADDOCK_RAM_MIB, PADDOCK_CPUS,"
+    echo "PADDOCK_PIDS_LIMIT and PADDOCK_TMP_SIZE (defaults: 8192, 4, 1024, 2048m)."
+    echo "XDG_DATA_HOME, if set, is baked in as the sandbox home's location instead"
+    echo "of the portable default \$HOME/.local/share/paddock."
     exit 1
 fi
 
 case "${ACTION}" in
     build)
-        ensure_image "${PROFILE}"
+        ensure_image
         ;;
     rebuild)
-        rebuild_profile "${PROFILE}"
+        build
         ;;
     run)
-        run_profile "${PROFILE}"
+        run
         ;;
     upgrade)
         upgrade_assistants

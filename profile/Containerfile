@@ -3,7 +3,7 @@ MAINTAINER Jan Baier <jbaier@suse.cz>
 
 # Basic metadata
 LABEL maintainer="Jan Baier <jbaier@suse.cz>" \
-      description="Paddock - Ultra-Minimal Base AI sandbox container"
+      description="Paddock - Hardened AI sandbox container"
 
 # 1. Install core system packages
 RUN zypper --non-interactive refresh && \
@@ -54,17 +54,27 @@ RUN curl -fsSL -o /tmp/gemini-cli.tgz https://registry.npmjs.org/@google/gemini-
     zypper clean --all && \
     rm -rf /var/cache/zypp/* /tmp/* /var/tmp/*
 
-# 3. Create non-root user `ai` with a pristine home directory
+# 3. Minimal developer tools; personally override this layer for project-specific tooling.
+RUN zypper --non-interactive refresh && \
+    zypper --non-interactive install --no-recommends \
+        ShellCheck \
+        bash-completion \
+        make \
+        vim \
+    && zypper clean --all \
+    && rm -rf /var/cache/zypp/* /tmp/* /var/tmp/*
+
+# 4. Create non-root user `ai` with a pristine home directory
 RUN groupadd --gid 1000 ai && \
     useradd --uid 1000 --gid 1000 --home-dir /home/ai --shell /bin/bash --no-create-home ai && \
     mkdir -p /home/ai && \
     chown ai:ai /home/ai
 
-# 4. Global configurations
+# 5. Global configurations
 RUN echo 'eval "$(starship init bash)"' >> /etc/bash.bashrc
 
-# 5. Copy and setup entrypoint script for secure guest VM privilege dropping
-COPY --chmod=755 profiles/base/entrypoint.sh /usr/local/bin/entrypoint.sh
+# 6. Copy and setup entrypoint script for secure guest VM privilege dropping
+COPY --chmod=755 profile/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 USER ai
 ENV HOME=/home/ai \
@@ -74,6 +84,11 @@ ENV HOME=/home/ai \
     TERM=xterm-256color
 
 WORKDIR /home/ai
+
+# `LABEL run` is intentionally not defined here: paddock.sh's run_label()
+# bakes it in at build time via `podman build --label`, so it can read
+# env-var-driven resource limits and an XDG-aware home path that a static
+# LABEL instruction cannot. See AGENTS.md, "The run label lives in paddock.sh".
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash", "--login"]
