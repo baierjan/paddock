@@ -9,7 +9,6 @@ The entire project is Bash + Containerfiles: no package manager, no build system
 ./test_paddock.sh    # lint + tests; the only verification step
 ./paddock.sh build   # unconditionally (re)build the image
 ./paddock.sh run     # build if needed, then launch
-./paddock.sh upgrade # fetch latest assistant versions, update Containerfile hashes
 podman container runlabel run paddock:latest   # equivalent, needs no checkout
 ```
 
@@ -60,10 +59,10 @@ enforces the gate.
   overridable" below. Since `HOME` is redirected to `mock_home/` for the whole suite (see above),
   it never touches a real `~/.local/share/paddock/`; a failure mid-test leaves it under
   `mock_home/`, which is deleted along with it.
-- Tests 11, 12 and 13 all move/mutate the real shipped `profile/Containerfile` (not a mock copy). A
+- Tests 11 and 12 both move/mutate the real shipped `profile/Containerfile` (not a mock copy). A
   `restore_containerfile` `trap ... EXIT` restores it on every exit path, including a failing
   assertion under `set -e`; without it, a failure mid-test would leave the working tree without
-  a Containerfile. Test 13 additionally needs the real `jq` and `openssl` (only `curl` is mocked).
+  a Containerfile.
 
 ## The run label lives in paddock.sh
 
@@ -125,12 +124,11 @@ Consequences worth knowing:
   forever. Comparing the label instead is idempotent: once rebuilt, the freshly baked label matches
   `run_label()` again and `run` stops rebuilding.
 - **This does NOT cover a Containerfile/entrypoint.sh edit that leaves `run_label()`'s output
-  unchanged** (e.g. an `upgrade`-updated `ARG`, or any other change confined to the Containerfile).
-  There is deliberately no automatic detection for that any more: `build` and `rebuild` used to be
-  two separate commands (conditional vs. unconditional); they are now just one (`build`, always
-  unconditional), and picking up a Containerfile-only change is an explicit `./paddock.sh build`,
-  same as `upgrade`'s own follow-up instruction says. A bare `podman container runlabel` never
-  builds anything either way, mtime-based or not.
+  unchanged** (e.g. a version bump in the Containerfile). There is deliberately no automatic
+  detection for that any more: `build` and `rebuild` used to be two separate commands (conditional
+  vs. unconditional); they are now just one (`build`, always unconditional), and picking up a
+  Containerfile-only change is an explicit `./paddock.sh build`. A bare `podman container runlabel`
+  never builds anything either way, mtime-based or not.
 - **The mock cannot see the flags.** Since podman resolves the label internally, `test_paddock.sh`
   only observes `podman container runlabel run <tag>`. Test 7 therefore asserts the required
   controls textually against the `podman build --label run=...` argument on the logged command line

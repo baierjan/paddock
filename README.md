@@ -19,11 +19,6 @@ Unlike complex multi-bind sandboxes, Paddock uses a single plain **Containerfile
 *   Rootless **Podman** container engine.
 *   The **`krun`** container runtime (or `libkrun`) and the **`pasta`** network isolator.
 
-### Host Environment for Automatic Upgrades (`upgrade`)
-*   **`curl`**: Used to query latest stable version metadata from the NPM registry.
-*   **`jq`**: Used to parse JSON payloads.
-*   **`openssl`**: Used for portable, cross-platform Base64-to-Hex conversions of registry integrity hashes.
-
 ---
 
 ## Key Features

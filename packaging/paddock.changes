@@ -1,4 +1,11 @@
 -------------------------------------------------------------------
+Tue Sep 22 09:47:48 UTC 2026 - Jan Baier <jbaier@suse.cz>
+
+- Drop the jq/openssl BuildRequires: gemini-cli is now installed from
+  the distro repo instead of a hand-verified npm tarball, so the
+  'upgrade' subcommand (and its jq/openssl/curl dependency) is gone.
+
+-------------------------------------------------------------------
 Sat Sep 19 12:05:24 UTC 2026 - Jan Baier <jbaier@suse.cz>
 
 - Initial package.

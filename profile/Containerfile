@@ -15,6 +15,7 @@ RUN zypper --non-interactive refresh && \
         file \
         findutils \
         gawk \
+        gemini-cli \
         git \
         gzip \
         jq \
@@ -35,19 +36,11 @@ RUN zypper --non-interactive refresh && \
     && zypper clean --all \
     && rm -rf /var/cache/zypp/* /tmp/* /var/tmp/*
 
-# 2. Install the Gemini CLI and the Google Cloud CLI globally.
+# 2. Install the Google Cloud CLI globally.
 # NOTE: the cloud-sdk repo is x86_64-only, so this image is x86_64-only.
 # NOTE: Google signs RPMs and repo metadata with two different keys --
 # rpm-package-key.gpg and the repo's own repomd.xml.key -- both are imported.
-ARG GEMINI_CLI_VER=0.60.0
-ARG GEMINI_CLI_HASH=6e9e9a2f2b4df9b7ada3cb131c8cccc8ae58e91cb998c66b05d346c77122023a88a52f7d07c73f12585aeb1c9844869b805b3443be7fc436ae35102a1c6637e3
-
-RUN curl -fsSL -o /tmp/gemini-cli.tgz https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-${GEMINI_CLI_VER}.tgz && \
-    echo "${GEMINI_CLI_HASH}  /tmp/gemini-cli.tgz" | sha512sum -c - && \
-    npm install -g /tmp/gemini-cli.tgz && \
-    rm -f /tmp/gemini-cli.tgz && \
-    npm cache clean --force && \
-    rpm --import https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg && \
+RUN rpm --import https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg && \
     rpm --import https://packages.cloud.google.com/yum/repos/cloud-sdk-el10-x86_64/repodata/repomd.xml.key && \
     rpm --import https://download.opensuse.org/repositories/SUSE:/CA/openSUSE_Tumbleweed/repodata/repomd.xml.key && \
     zypper --non-interactive addrepo --gpgcheck --refresh --name "Google Cloud CLI" https://packages.cloud.google.com/yum/repos/cloud-sdk-el10-x86_64 google-cloud-cli && \

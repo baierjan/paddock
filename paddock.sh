@@ -144,63 +144,12 @@ run() {
     podman container runlabel run "${IMAGE}"
 }
 
-upgrade_assistants() {
-    local cf
-    cf="$(resolved_containerfile)"
-
-    command -v curl >/dev/null 2>&1 || error "curl is required on the host for upgrades."
-    command -v jq >/dev/null 2>&1 || error "jq is required on the host for upgrades."
-    command -v openssl >/dev/null 2>&1 || error "openssl is required on the host for upgrades."
-
-    local curr_gemini_ver
-    curr_gemini_ver="$(grep "ARG GEMINI_CLI_VER=" "${cf}" | cut -d= -f2)" || \
-        error "No 'ARG GEMINI_CLI_VER=' line found in ${cf}"
-
-    info "Checking for upgrades..."
-    info "Current @google/gemini-cli: ${curr_gemini_ver}"
-
-    local gemini_json; gemini_json="$(curl -fsSL https://registry.npmjs.org/@google/gemini-cli/latest)"
-    local latest_gemini_ver; latest_gemini_ver="$(echo "${gemini_json}" | jq -r .version)"
-    # Reject a malformed version before it reaches sed and corrupts the Containerfile.
-    [[ "${latest_gemini_ver}" =~ ^[0-9]+(\.[0-9]+)+([-.][0-9A-Za-z.]+)?$ ]] || \
-        error "Unexpected version string from registry: '${latest_gemini_ver}'"
-
-    local newest
-    newest="$(printf '%s\n%s\n' "${curr_gemini_ver}" "${latest_gemini_ver}" | sort -V | tail -n1)"
-
-    if [ "${latest_gemini_ver}" = "${curr_gemini_ver}" ]; then
-        info "@google/gemini-cli is already up to date!"
-    elif [ "${newest}" != "${latest_gemini_ver}" ]; then
-        info "Registry version (${latest_gemini_ver}) is older than the pinned version (${curr_gemini_ver}); not downgrading."
-    else
-        info "New @google/gemini-cli version found: ${latest_gemini_ver}"
-        local gemini_integrity; gemini_integrity="$(echo "${gemini_json}" | jq -r .dist.integrity)"
-        [[ "${gemini_integrity}" == sha512-* ]] || \
-            error "Registry integrity hash is not sha512-prefixed: '${gemini_integrity}'"
-        local gemini_b64="${gemini_integrity#sha512-}"
-        local new_gemini_hash; new_gemini_hash="$(echo -n "${gemini_b64}" | openssl enc -base64 -d -A | od -An -tx1 | tr -d ' \n')"
-        [[ "${new_gemini_hash}" =~ ^[0-9a-f]{128}$ ]] || \
-            error "Decoded hash is not a 128-char sha512 digest: '${new_gemini_hash}'"
-
-        info "Updating ${cf}..."
-        sed \
-          -e "s/ARG GEMINI_CLI_VER=.*/ARG GEMINI_CLI_VER=${latest_gemini_ver}/" \
-          -e "s/ARG GEMINI_CLI_HASH=.*/ARG GEMINI_CLI_HASH=${new_gemini_hash}/" \
-          "${cf}" > "${cf}.tmp" && mv "${cf}.tmp" "${cf}"
-
-        info "Successfully upgraded @google/gemini-cli in Containerfile!"
-        info "To apply these changes, rebuild your image using:"
-        info "  ./paddock.sh build"
-    fi
-}
-
 # Main routing
 usage() {
-    echo "Usage: $0 {build|run|upgrade}"
+    echo "Usage: $0 {build|run}"
     echo "Examples:"
     echo "  $0 build            # Build (or rebuild) the image"
     echo "  $0 run              # Build if needed, then launch the sandbox"
-    echo "  $0 upgrade          # Fetch latest assistants and update hashes"
     echo
     echo "The image can be personally overridden via a Containerfile at"
     echo "\$HOME/.local/share/paddock/Containerfile, which takes precedence over"
@@ -231,10 +180,7 @@ case "${ACTION}" in
     run)
         run
         ;;
-    upgrade)
-        upgrade_assistants
-        ;;
     *)
-        error "Unknown action '${ACTION}'. Use 'build', 'run' or 'upgrade'."
+        error "Unknown action '${ACTION}'. Use 'build' or 'run'."
         ;;
 esac

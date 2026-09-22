@@ -61,18 +61,6 @@ fi
 EOF
 chmod +x "${MOCK_BIN}/podman"
 
-# Create mock curl command; "latest" is MOCK_GEMINI_VERSION (default 0.99.0), an upgrade over every pinned version here.
-cat << 'EOF' > "${MOCK_BIN}/curl"
-#!/bin/bash
-if [[ "$*" == *"@google/gemini-cli/latest"* ]]; then
-    ver="${MOCK_GEMINI_VERSION:-0.99.0}"
-    echo "{\"version\":\"${ver}\",\"dist\":{\"tarball\":\"https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-${ver}.tgz\",\"integrity\":\"sha512-Olber5MK116YhYzdSn0/UPNo3rbxj4CJEgSBARIELwKFm1NHGJ4Fc7kMjvEPPLtxip0Aki8xUM28HG4sQ2GE0g==\"}}"
-else
-    /usr/bin/curl "$@"
-fi
-EOF
-chmod +x "${MOCK_BIN}/curl"
-
 export PATH="${MOCK_BIN}:${PATH}"
 
 # Ensure XDG/PADDOCK variables are unset for deterministic test paths
@@ -316,7 +304,7 @@ esac
 # Test 11: build() validates the Containerfile even when the image already
 # exists, since an existing tag doesn't prove the Containerfile is still there.
 #
-# Tests 11, 12 and 13 all move/mutate the real shipped Containerfile; the trap
+# Tests 11 and 12 both move/mutate the real shipped Containerfile; the trap
 # below restores it on every exit path, including a failing assertion under
 # `set -e`.
 restore_containerfile() {
@@ -340,49 +328,10 @@ assert_fails "'run' is rejected when the Containerfile is missing" \
     env MOCK_IMAGES="${IMAGES}" bash -c "cd '${MOCK_WORKSPACE}' && '${ROOT_DIR}/paddock.sh' run"
 mv "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
 
-# Test 13: upgrade updates Containerfile build variables safely
-echo "Test 13: upgrade assistants..."
-cp -p "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
-
-# Run upgrade (will trigger upgrade for gemini-cli to the mock's default 0.99.0)
-"${ROOT_DIR}/paddock.sh" upgrade
-
-if ! grep -q "ARG GEMINI_CLI_VER=0.99.0" "${CONTAINERFILE}"; then
-    echo "FAIL: GEMINI_CLI_VER was not updated to 0.99.0" >&2
-    exit 1
-fi
-
-mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
-echo "PASS: upgrade successfully updates Containerfile parameters"
-
-# Test 14: upgrade refuses to downgrade when the registry's "latest" is older.
-echo "Test 14: upgrade refuses to downgrade..."
-cp -p "${CONTAINERFILE}" "${CONTAINERFILE}.bak"
-
-UPGRADE_OUT="$(MOCK_GEMINI_VERSION=0.1.0 "${ROOT_DIR}/paddock.sh" upgrade)"
-
-if grep -q "ARG GEMINI_CLI_VER=0.1.0" "${CONTAINERFILE}"; then
-    echo "FAIL: upgrade downgraded GEMINI_CLI_VER to 0.1.0" >&2
-    mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
-    exit 1
-fi
-case "${UPGRADE_OUT}" in
-    *"not downgrading"*) ;;
-    *)
-        echo "FAIL: upgrade did not report refusing to downgrade" >&2
-        echo "  output: ${UPGRADE_OUT}" >&2
-        mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
-        exit 1
-        ;;
-esac
-
-mv -f "${CONTAINERFILE}.bak" "${CONTAINERFILE}"
-echo "PASS: upgrade refuses to downgrade an older registry version"
-
 # --- run: refuses to launch from a dangerous cwd -----------------------------
 
-# Test 15: run refuses to recursively SELinux-relabel $HOME.
-echo "Test 15: run refuses to launch from \$HOME..."
+# Test 13: run refuses to recursively SELinux-relabel $HOME.
+echo "Test 13: run refuses to launch from \$HOME..."
 assert_fails "'run' is rejected from \$HOME" \
     env MOCK_IMAGES="${IMAGES}" bash -c "cd '${HOME}' && '${ROOT_DIR}/paddock.sh' run"
 
