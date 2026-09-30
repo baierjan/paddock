@@ -83,7 +83,7 @@ shipped Containerfile. This works whether `paddock.sh` was checked out from git 
 system-wide.
 
 #### Bundled AI Assistants
-The image installs both `opencode` and the Gemini CLI (`@google/gemini-cli`) globally, alongside
+The image installs both `opencode` and the Gemini CLI from the distro repositories, alongside
 the Google Cloud CLI. No build-time selection is required.
 
 > Because the Google Cloud CLI is published only for `x86_64`, the image is **x86_64-only**.
@@ -124,7 +124,7 @@ To prevent container file masking (hiding pre-installed files inside the image),
 *   Custom terminal prompts are initialized globally via `starship` in `/etc/bash.bashrc`.
 *   Any shell commands run inside write persistent caches natively to the host's `~/.local/share/paddock/home`, which is bind-mounted directly to `/home/ai`.
 
-Additionally, to work correctly inside virtualized **`krun`** environments (where guest kernels boot standard entrypoints as root by default), Paddock includes a secure `/usr/local/bin/entrypoint.sh` privilege-dropper. This script captures the container's starting directory, registers the `ai` user's environmental properties, and uses `setpriv` to drop all VM-level permissions down to the unprivileged `ai` user before spawning your shell.
+Additionally, to work correctly inside virtualized **`krun`** environments (where guest kernels boot standard entrypoints as root by default), Paddock includes a secure `/usr/local/bin/entrypoint.sh` privilege-dropper. Before dropping privileges, this script re-applies `noexec,nosuid,nodev` to `/tmp` (krun mounts it inside the guest without those flags), then registers the `ai` user's environmental properties and uses `setpriv` to drop all VM-level permissions down to the unprivileged `ai` user before spawning your shell.
 
 ---
 
