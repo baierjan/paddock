@@ -456,6 +456,37 @@ ln -snf "${HOME}/real_home" "${HOME}/sym_home"
 assert_fails "'run' is rejected from symlinked HOME" \
     env MOCK_IMAGES="${IMAGES}" HOME="${HOME}/sym_home" bash -c "cd '${HOME}/real_home' && '${ROOT_DIR}/paddock.sh' run"
 
+# Test 24: the guest entrypoint hardens /tmp before dropping privileges
+echo "Test 24: entrypoint hardens /tmp before dropping privileges..."
+ENTRY_STUBS="${MOCK_BIN}/entry"
+mkdir -p "${ENTRY_STUBS}"
+cat << 'EOF' > "${ENTRY_STUBS}/id"
+#!/bin/bash
+case "$*" in
+    "-u") echo 0 ;;
+    "-u ai" | "-g ai") echo 1000 ;;
+esac
+EOF
+cat << 'EOF' > "${ENTRY_STUBS}/mount"
+#!/bin/bash
+echo "mount $*" >> "${MOCK_LOG}"
+[ -z "${MOCK_MOUNT_FAIL:-}" ]
+EOF
+cat << 'EOF' > "${ENTRY_STUBS}/setpriv"
+#!/bin/bash
+echo "setpriv $*" >> "${MOCK_LOG}"
+EOF
+chmod +x "${ENTRY_STUBS}/id" "${ENTRY_STUBS}/mount" "${ENTRY_STUBS}/setpriv"
+reset_log
+PATH="${ENTRY_STUBS}:${PATH}" bash "${ROOT_DIR}/profile/entrypoint.sh" bash
+assert_log "mount -o remount,bind,noexec,nosuid,nodev /tmp" "entrypoint remounts /tmp noexec,nosuid,nodev"
+assert_last_log "setpriv --reuid=1000 --regid=1000 --init-groups --inh-caps=-all --bounding-set=-all --nnp ${ROOT_DIR}/profile/entrypoint.sh bash" \
+    "privileges are dropped only after /tmp is hardened"
+reset_log
+assert_fails "entrypoint aborts when a mount fails" \
+    env PATH="${ENTRY_STUBS}:${PATH}" MOCK_MOUNT_FAIL=1 bash "${ROOT_DIR}/profile/entrypoint.sh" bash
+assert_no_log "setpriv" "a failed mount never reaches setpriv"
+
 echo "=== All Paddock Tests Passed Successfully ==="
 
 # Cleanup

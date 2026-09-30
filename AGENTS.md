@@ -205,6 +205,15 @@ Worth knowing:
   `bash` or an overridden command. The interactive default is therefore a non-login shell under
   that login shell: only exported variables survive from login files, so functions, aliases and
   `shopt` settings belong in `~/.bashrc`, and `logout` does not work (use `exit`).
+- **Guest mount hardening**: krun mounts `--tmpfs /tmp` as a plain virtiofs share and ignores
+  its options, so the same root-only branch of the entrypoint bind-remounts `/tmp`
+  `noexec,nosuid,nodev` before dropping privileges. A failed remount aborts the launch
+  (`set -e`) instead of starting unhardened. The rootfs needs no remount: krun enforces
+  `--read-only` host-side (writes fail with EROFS even as root) while the guest's `/proc/mounts`
+  still says `rw`. Test 24 covers the remount with stubs; it cannot prove the guest kernel
+  accepts it. The host-side tmpfs does get `noexec,nosuid,nodev` and `size=`, but the guest sees
+  it as a virtiofs submount with default flags and only the size limit carries over. libkrun
+  1.19.x's init ignores the spec's tmpfs options, so this remount is the only in-guest fix today.
 - **Build context is the repo root** (`podman build -f profile/Containerfile $ROOT_DIR`);
   `profile/Containerfile` relies on this for `COPY profile/entrypoint.sh`.
 - **The image is x86_64-only.** It unconditionally installs the Google Cloud CLI from the
