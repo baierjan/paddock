@@ -95,13 +95,21 @@ To run your project inside a sandbox:
 ```
 This automatically:
 *   Prepares a persistent local home folder on the host at `~/.local/share/paddock/home`.
-*   Delegates the launch to the image's `LABEL run` via `podman container runlabel`, mounting the current directory at `/home/ai/sandbox`.
+*   Delegates the launch to the image's `LABEL run` via `podman container runlabel` (or runs `podman run` directly when custom options or commands are provided), mounting the current directory at `/home/ai/sandbox`.
 *   Starts an interactive bash shell as the non-root `ai` user in that workspace.
+
+You can also land in a specific workspace subdirectory or pass a command to run directly:
+```bash
+./paddock.sh run -w myproject             # Land in workspace subdirectory
+./paddock.sh run opencode -c              # Run command directly instead of shell
+./paddock.sh run -w myproject opencode -c # Run command inside subdirectory
+```
+Commands are always routed through a login shell, ensuring `/etc/profile` and login profile scripts are sourced so environment variables are initialized.
 
 ---
 
 ## Native Podman `runlabel` Support
-The image carries a `LABEL run`, baked in by `paddock.sh` at build time (see "Key Features" above), which is the single definition of every mount and security flag. `./paddock.sh run` simply invokes it, so running Podman directly is equivalent and needs no checkout of this repository:
+The image carries a `LABEL run`, baked in by `paddock.sh` at build time (see "Key Features" above), which is the single definition of every mount and security flag. `./paddock.sh run` simply invokes it (when launched without options or a command), so running Podman directly is equivalent and needs no checkout of this repository:
 ```bash
 podman container runlabel run paddock:latest
 ```
@@ -121,7 +129,7 @@ Additionally, to work correctly inside virtualized **`krun`** environments (wher
 ---
 
 ## Testing & Verification
-Paddock includes an automated mock-based integration test suite. You can run it on any Linux or macOS environment to verify script behavior and container argument generation without needing `podman` fully installed:
+Paddock includes an automated mock-based integration test suite. You can run it on any Linux environment to verify script behavior and container argument generation without needing `podman` fully installed:
 ```bash
 ./test_paddock.sh
 ```

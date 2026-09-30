@@ -63,15 +63,23 @@ enforces the gate.
   `restore_containerfile` `trap ... EXIT` restores it on every exit path, including a failing
   assertion under `set -e`; without it, a failure mid-test would leave the working tree without
   a Containerfile.
+- Tests 14-23 exercise `-w`, symlink safety, and command execution via direct `podman run`.
+  Because Tests 7-10 overwrite the mock's `BAKED_LABEL` with scratch build labels, `BAKED_LABEL`
+  is re-initialized before Test 14 so subsequent `run` tests don't see a spurious label mismatch.
+  The mock podman records flattened command lines into `MOCK_LOG` and delimited argv tokens into
+  `MOCK_ARGV_LOG` (`<arg1><arg2>...`); Tests 14, 19, 20, and 21 assert exact argv boundaries using
+  `assert_argv` to guarantee flag arguments and paths with spaces do not get merged or split.
 
 ## The run label lives in paddock.sh
 
-`run_label()` in `paddock.sh` is the **sole** definition of every mount, annotation and security
+`sandbox_flags()` in `paddock.sh` is the **sole** definition of every mount, annotation and security
 flag, not the Containerfile. `build()` passes it to `podman build --label run=...` at build time,
-so it still ends up baked into the image; `paddock.sh run` still does not build a `podman run` line
-at all, it calls `podman container runlabel run paddock:latest` and lets podman expand the baked-in
-label. Adding a `podman run` back into `paddock.sh` would recreate the duplication this design
-removed.
+so it still ends up baked into the image. When launched without arguments, `paddock.sh run` delegates
+to `podman container runlabel run paddock:latest`. When launched with `-w` or a custom command,
+`paddock.sh run` parses options with `getopts` (supporting `-w <folder>`, `-h`, and `--` before
+commands starting with a hyphen), validates that `-w` stays within the workspace using `cd -P` and
+physical prefix matching, and executes `podman run` directly using the same `sandbox_flags()`, ensuring
+arguments and folder paths are passed cleanly as argv without being mangled by `runlabel`'s string-splitting.
 
 **A literal, still-unexpanded `$HOME`/`$PWD` cannot be spelled as `$HOME`/`$PWD` or `\$HOME`/`\$PWD`
 in this value: it must be `$${}HOME`/`$${}PWD`.** `podman build --label run=...` re-injects the
@@ -191,13 +199,19 @@ Worth knowing:
 - **Entrypoint privilege drop**: `profile/entrypoint.sh` re-execs itself via `setpriv` when
   the guest kernel boots it as UID 0 (krun does this despite `--user ai`). No `cd` is needed
   around this: cwd is a process attribute (`fs_struct`), untouched by `exec` or by credential
-  syscalls (`setuid`/`setgid`/`initgroups`), so it survives the re-exec on its own.
+  syscalls (`setuid`/`setgid`/`initgroups`), so it survives the re-exec on its own. The final
+  command is routed through `bash --login -c 'exec "$@"' paddock "$@"` so login profile scripts
+  (`/etc/profile`, `~/.bash_profile`) are always sourced before executing either interactive
+  `bash` or an overridden command. The interactive default is therefore a non-login shell under
+  that login shell: only exported variables survive from login files, so functions, aliases and
+  `shopt` settings belong in `~/.bashrc`, and `logout` does not work (use `exit`).
 - **Build context is the repo root** (`podman build -f profile/Containerfile $ROOT_DIR`);
   `profile/Containerfile` relies on this for `COPY profile/entrypoint.sh`.
 - **The image is x86_64-only.** It unconditionally installs the Google Cloud CLI from the
   `cloud-sdk-el10-x86_64` repo, which publishes no other architecture. There is no build-time
   switch to opt out: assistants (`opencode` + `@google/gemini-cli`) are fixed, not selectable.
-- Host prerequisites for `run` (not for tests): rootless podman, the `krun` runtime, and `pasta`.
+- Host prerequisites for `run`: rootless podman, the `krun` runtime, and `pasta`. `run` and the
+  test suite also need GNU `realpath` (coreutils); macOS is not supported.
 
 ## Conventions
 

@@ -4,7 +4,8 @@ set -eo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MOCK_BIN="${ROOT_DIR}/mock_bin"
 MOCK_LOG="$(mktemp)"
-export MOCK_LOG
+MOCK_ARGV_LOG="$(mktemp)"
+export MOCK_LOG MOCK_ARGV_LOG
 # A stand-in project dir for `run` tests -- ROOT_DIR itself becomes an ancestor of DATA_HOME below.
 MOCK_WORKSPACE="${ROOT_DIR}/mock_workspace"
 CONTAINERFILE="${ROOT_DIR}/profile/Containerfile"
@@ -37,6 +38,7 @@ else
 fi
 
 # Setup mock environment
+rm -rf "${MOCK_BIN}" "${MOCK_WORKSPACE}"
 mkdir -p "${MOCK_BIN}" "${MOCK_WORKSPACE}"
 : > "${MOCK_LOG}"
 
@@ -45,6 +47,12 @@ mkdir -p "${MOCK_BIN}" "${MOCK_WORKSPACE}"
 cat << 'EOF' > "${MOCK_BIN}/podman"
 #!/bin/bash
 echo "podman $*" >> "${MOCK_LOG}"
+printf '<podman>' >> "${MOCK_ARGV_LOG}"
+for a in "$@"; do
+    a_esc="${a//$'\n'/\\n}"
+    printf '<%s>' "$a_esc" >> "${MOCK_ARGV_LOG}"
+done
+echo >> "${MOCK_ARGV_LOG}"
 # Which images exist: space-separated tags in MOCK_IMAGES (default: none).
 if [ "$1" = "image" ] && [ "$2" = "exists" ]; then
     case " ${MOCK_IMAGES:-} " in
@@ -76,7 +84,23 @@ OVERRIDE_CF="${HOME}/.local/share/paddock/Containerfile"
 
 # --- Helpers -----------------------------------------------------------------
 
-reset_log() { : > "${MOCK_LOG}"; }
+reset_log() { : > "${MOCK_LOG}"; : > "${MOCK_ARGV_LOG}"; }
+
+# assert_argv <fixed-substring> <description>
+assert_argv() {
+    local actual
+    actual="$(tail -n 1 "${MOCK_ARGV_LOG}")"
+    case "${actual}" in
+        *"$1"*) ;;
+        *)
+            echo "FAIL: $2" >&2
+            echo "  expected to contain: $1" >&2
+            echo "  actual             : ${actual}" >&2
+            exit 1
+            ;;
+    esac
+    echo "PASS: $2"
+}
 
 # assert_log <fixed-substring> <description>
 assert_log() {
@@ -335,7 +359,104 @@ echo "Test 13: run refuses to launch from \$HOME..."
 assert_fails "'run' is rejected from \$HOME" \
     env MOCK_IMAGES="${IMAGES}" bash -c "cd '${HOME}' && '${ROOT_DIR}/paddock.sh' run"
 
+# --- run: -w and command forwarding -----------------------------------------
+
+# Reset BAKED_LABEL after Tests 7-10 scratch builds to avoid spurious rebuilds.
+BAKED_LABEL="${LABEL//\$\${\}/\$}"
+
+# The label's flags with the runtime-resolved mounts substituted and the
+# workdir/image tail removed.
+PODMAN_DIRECT_RUN="${LABEL%% --workdir *}"
+# shellcheck disable=SC2016
+PODMAN_DIRECT_RUN="${PODMAN_DIRECT_RUN/'$${}HOME/.local/share/paddock/home'/${PADDOCK_HOME}}"
+# shellcheck disable=SC2016
+PODMAN_DIRECT_RUN="${PODMAN_DIRECT_RUN/'$${}PWD'/${MOCK_WORKSPACE}}"
+
+# Test 14: run -w launches podman directly with custom workdir
+echo "Test 14: run -w launches podman directly with custom workdir..."
+mkdir -p "${MOCK_WORKSPACE}/subproj/nested"
+reset_log
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run -w subproj)
+assert_last_log "${PODMAN_DIRECT_RUN} --workdir /home/ai/sandbox/subproj paddock:latest" \
+    "run -w launches podman directly with custom workdir"
+assert_argv "<--workdir></home/ai/sandbox/subproj>" \
+    "Workdir flag and value are separate argv tokens"
+reset_log
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run -w subproj/nested)
+assert_last_log "${PODMAN_DIRECT_RUN} --workdir /home/ai/sandbox/subproj/nested paddock:latest" \
+    "run -w with nested path launches podman directly"
+
+# Test 15: run -w with command forwards command after image
+echo "Test 15: run -w with command forwards command after image..."
+reset_log
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run -w subproj opencode -c)
+assert_last_log "${PODMAN_DIRECT_RUN} --workdir /home/ai/sandbox/subproj paddock:latest opencode -c" \
+    "run -w with command forwards command arguments"
+
+# Test 16: run with command but no -w forwards command directly
+echo "Test 16: run with command but no -w forwards command directly..."
+reset_log
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run opencode -c)
+assert_last_log "${PODMAN_DIRECT_RUN} --workdir /home/ai/sandbox paddock:latest opencode -c" \
+    "run forwards command arguments directly without -w"
+
+# Test 17: run -w with nonexistent directory is rejected
+echo "Test 17: run -w with nonexistent directory is rejected..."
+assert_fails "run -w nonexistent is rejected" \
+    env MOCK_IMAGES="${IMAGES}" bash -c "cd '${MOCK_WORKSPACE}' && '${ROOT_DIR}/paddock.sh' run -w nonexistent"
+assert_fails "run -w without argument is rejected" \
+    env MOCK_IMAGES="${IMAGES}" bash -c "cd '${MOCK_WORKSPACE}' && '${ROOT_DIR}/paddock.sh' run -w"
+assert_fails "run with unknown option is rejected" \
+    env MOCK_IMAGES="${IMAGES}" bash -c "cd '${MOCK_WORKSPACE}' && '${ROOT_DIR}/paddock.sh' run -x"
+
+# Test 18: run -w rejects directories outside the workspace, directly or via symlink
+echo "Test 18: run -w rejects directories outside the workspace..."
+ln -snf "${ROOT_DIR}" "${MOCK_WORKSPACE}/symlink_outside"
+for outside in .. symlink_outside; do
+    # shellcheck disable=SC2016
+    assert_fails "run -w ${outside} is rejected" \
+        env MOCK_IMAGES="${IMAGES}" bash -c 'cd "$1" && "$2" run -w "$3"' _ "${MOCK_WORKSPACE}" "${ROOT_DIR}/paddock.sh" "${outside}"
+done
+
+# Test 19: run -w with spaces in folder name succeeds via direct podman run
+echo "Test 19: run -w with spaces in folder name succeeds..."
+mkdir -p "${MOCK_WORKSPACE}/sub dir"
+reset_log
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run -w "sub dir")
+assert_argv "<--workdir></home/ai/sandbox/sub dir>" \
+    "Folder with spaces is preserved as a single workdir argument"
+
+# Test 20: run forwards command arguments containing spaces and metacharacters safely
+echo "Test 20: run forwards arbitrary command arguments safely..."
+reset_log
+# shellcheck disable=SC2016
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run echo "hello world" '$FOO' 'rg \d')
+assert_argv "<echo><hello world><\$FOO><rg \\d>" \
+    "Command arguments with spaces and metacharacters preserve exact argv boundaries"
+
+# Test 21: run -w with newline in folder name preserves argv boundary without flag injection
+echo "Test 21: run -w with newline in folder name preserves argv boundary..."
+mkdir -p "${MOCK_WORKSPACE}/"$'\n'"--privileged"
+reset_log
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run -w $'\n'"--privileged")
+assert_argv '<--workdir></home/ai/sandbox/\n--privileged>' \
+    "Folder with newline is preserved as a single workdir argument"
+
+# Test 22: run -- forwards commands starting with a hyphen
+echo "Test 22: run -- forwards command starting with a hyphen..."
+reset_log
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run -- ls -l)
+assert_last_log "${PODMAN_DIRECT_RUN} --workdir /home/ai/sandbox paddock:latest ls -l" \
+    "run -- forwards hyphen-prefixed command"
+
+# Test 23: run refuses to launch when HOME is reached via a symlink
+echo "Test 23: run refuses to launch from symlinked HOME..."
+mkdir -p "${HOME}/real_home"
+ln -snf "${HOME}/real_home" "${HOME}/sym_home"
+assert_fails "'run' is rejected from symlinked HOME" \
+    env MOCK_IMAGES="${IMAGES}" HOME="${HOME}/sym_home" bash -c "cd '${HOME}/real_home' && '${ROOT_DIR}/paddock.sh' run"
+
 echo "=== All Paddock Tests Passed Successfully ==="
 
 # Cleanup
-rm -rf "${MOCK_BIN}" "${MOCK_LOG}" "${MOCK_WORKSPACE}" "${HOME}"
+rm -rf "${MOCK_BIN}" "${MOCK_LOG}" "${MOCK_ARGV_LOG}" "${MOCK_WORKSPACE}" "${HOME}"

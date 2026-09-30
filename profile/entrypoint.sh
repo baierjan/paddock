@@ -15,4 +15,6 @@ if [ "$(id -u)" = "0" ] && id ai >/dev/null 2>&1; then
         "$0" "$@"
 fi
 
-exec "$@"
+# Sourcing /etc/profile and dotfiles requires a login shell for both default and custom commands.
+# shellcheck disable=SC2016
+exec bash --login -c 'exec "$@"' paddock "$@"

@@ -1,6 +1,8 @@
 #!/bin/bash
 set -eo pipefail
 
+unset CDPATH
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Paddock's own persistent, machine-local state: the sandbox home and a
@@ -16,8 +18,6 @@ require_podman() {
     command -v podman >/dev/null 2>&1 || error "Podman is required but not installed."
 }
 
-# resolved_containerfile -- the Containerfile paddock builds, rejecting a
-# missing file; see AGENTS.md, "The Containerfile is personally overridable".
 resolved_containerfile() {
     local cf="${DATA_HOME}/Containerfile"
     [ -f "${cf}" ] || cf="${ROOT_DIR}/profile/Containerfile"
@@ -25,10 +25,9 @@ resolved_containerfile() {
     echo "${cf}"
 }
 
-# run_label -- the `podman run ...` string baked into the image via
-# `podman build --label run=...`; see AGENTS.md, "The run label lives in
-# paddock.sh", for why it isn't a static Containerfile LABEL.
-run_label() {
+# An array, not stdout, so paths with newlines cannot split argv tokens; callers must
+# re-invoke per use since run_label() leaves placeholder mount paths behind.
+sandbox_flags() {
     local ram="${PADDOCK_RAM_MIB:-8192}"
     local cpus="${PADDOCK_CPUS:-4}"
     local pids="${PADDOCK_PIDS_LIMIT:-1024}"
@@ -38,8 +37,31 @@ run_label() {
     [[ "${cpus}" =~ ^[0-9]+$ ]] || error "PADDOCK_CPUS must be a positive integer: '${cpus}'"
     [[ "${pids}" =~ ^[0-9]+$ ]] || error "PADDOCK_PIDS_LIMIT must be a positive integer: '${pids}'"
     [[ "${tmp_size}" =~ ^[0-9]+[kKmMgG]?$ ]] || error "PADDOCK_TMP_SIZE must be an integer optionally suffixed with k/m/g: '${tmp_size}'"
-    # $HOME/$PWD must stay spelled `$${}HOME`/`$${}PWD`, not plain or
-    # `\$`-escaped; see AGENTS.md, "The run label lives in paddock.sh", for why.
+
+    SANDBOX_FLAGS=(
+        podman run --rm --interactive --tty
+        --runtime krun
+        --network pasta
+        --annotation krun.use_passt=1
+        --annotation "krun.ram_mib=${ram}"
+        --annotation "krun.cpus=${cpus}"
+        --cap-drop ALL
+        --security-opt no-new-privileges
+        --read-only
+        --tmpfs "/tmp:rw,noexec,nosuid,nodev,size=${tmp_size}"
+        --pids-limit "${pids}"
+        --hostname paddock-latest
+        --user ai
+        --userns "keep-id:uid=1000,gid=1000"
+        --volume "$1:/home/ai:z"
+        --volume "$2:/home/ai/sandbox:z"
+        --workdir "$3"
+        "${IMAGE}"
+    )
+}
+
+run_label() {
+    # Escaped as $${} so Dockerfile variable substitution preserves literal $HOME/$PWD tokens.
     # shellcheck disable=SC2016
     local home_volume='$${}HOME/.local/share/paddock/home'
     case "${XDG_DATA_HOME:-}" in
@@ -56,29 +78,8 @@ run_label() {
     # shellcheck disable=SC2016
     local pwd_volume='$${}PWD'
 
-    # Array elements, not a string: the indentation is inter-word
-    # whitespace, so it can't leak into the joined value below.
-    local -a flags=(
-        podman run --rm --interactive --tty
-        --runtime krun
-        --network pasta
-        --annotation krun.use_passt=1
-        "--annotation krun.ram_mib=${ram}"
-        "--annotation krun.cpus=${cpus}"
-        --cap-drop ALL
-        --security-opt no-new-privileges
-        --read-only
-        "--tmpfs /tmp:rw,noexec,nosuid,nodev,size=${tmp_size}"
-        "--pids-limit ${pids}"
-        --hostname paddock-latest
-        --user ai
-        "--userns keep-id:uid=1000,gid=1000"
-        "--volume ${home_volume}:/home/ai:z"
-        "--volume ${pwd_volume}:/home/ai/sandbox:z"
-        --workdir /home/ai/sandbox
-        "${IMAGE}"
-    )
-    echo "${flags[*]}"
+    sandbox_flags "${home_volume}" "${pwd_volume}" "/home/ai/sandbox"
+    echo "${SANDBOX_FLAGS[*]}"
 }
 
 # build -- unconditional build of the image.
@@ -91,14 +92,10 @@ build() {
     podman build -t "${IMAGE}" -f "${cf}" --label "run=$(run_label)" "${ROOT_DIR}"
 }
 
-# ensure_image -- builds when the image is missing, or when its baked-in
-# `run` label no longer matches run_label(); see AGENTS.md, "The run label
-# lives in paddock.sh", for why this doesn't use the image's `Created` time,
-# and why a plain Containerfile/entrypoint.sh edit needs an explicit `build`.
+# Builds when image is missing or when resource limits in the baked run label changed.
 ensure_image() {
     require_podman
-    # Validates even when no rebuild is needed; see AGENTS.md, "The
-    # Containerfile is personally overridable".
+    # Fail early if the Containerfile is missing even when the image already exists.
     resolved_containerfile > /dev/null
 
     if ! podman image exists "${IMAGE}"; then
@@ -118,18 +115,50 @@ ensure_image() {
 }
 
 run() {
-    ensure_image
+    local folder=""
+    local OPTIND=1 opt OPTARG
+    while getopts ":hw:" opt; do
+        case "${opt}" in
+            h)
+                usage
+                exit 0
+                ;;
+            w)
+                folder="${OPTARG}"
+                ;;
+            :)
+                error "Option '-${OPTARG}' requires an argument."
+                ;;
+            \?)
+                error "Unknown option '-${OPTARG}' for 'run' (use '--' before commands starting with a hyphen)."
+                ;;
+        esac
+    done
+    shift $((OPTIND - 1))
 
     # $PWD is mounted with a recursive SELinux relabel (:z) -- refuse anywhere too broad.
-    local cwd; cwd="$(pwd)"
+    local cwd; cwd="$(pwd -P)"
+    local real_home; real_home="$(realpath -m -- "${HOME}")"
+    local real_data_home; real_data_home="$(realpath -m -- "${DATA_HOME}")"
     case "${cwd}" in
-        "/" | "${HOME}")
+        "/" | "${real_home}")
             error "Refusing to run from '${cwd}': mounting it recursively SELinux-relabels your entire home or root filesystem. cd into a project directory first." ;;
     esac
-    case "${DATA_HOME}" in
+    case "${real_data_home}" in
         "${cwd}"/*)
             error "Refusing to run from '${cwd}': it contains paddock's own state (${DATA_HOME}). cd into a project directory first." ;;
     esac
+
+    if [ -n "${folder}" ]; then
+        [ -d "${folder}" ] || error "Directory '${folder}' is not an accessible directory in ${cwd}."
+        folder="$(realpath --relative-to="${cwd}" -- "${folder}")"
+        case "${folder}" in
+            .) folder="" ;;
+            .. | ../*) error "Directory '${folder}' is outside the workspace (${cwd})." ;;
+        esac
+    fi
+
+    ensure_image
 
     # Pre-created so it's owned by the invoking user, not by podman.
     local home_host="${DATA_HOME}/home"
@@ -137,19 +166,28 @@ run() {
 
     # Listed in mount order: the home volume lands on /home/ai first, then the
     # workspace is mounted at /home/ai/sandbox inside it.
-    info "Launching sandbox via 'podman container runlabel'..."
+    info "Launching sandbox..."
     info "Home directory: ${home_host} -> /home/ai"
-    info "Workspace: $(pwd) -> /home/ai/sandbox"
+    info "Workspace: ${cwd} -> /home/ai/sandbox"
 
-    podman container runlabel run "${IMAGE}"
+    if [ -z "${folder}" ] && [ $# -eq 0 ]; then
+        podman container runlabel run "${IMAGE}"
+    else
+        sandbox_flags "${home_host}" "${cwd}" "/home/ai/sandbox${folder:+/${folder}}"
+        "${SANDBOX_FLAGS[@]}" "$@"
+    fi
 }
 
 # Main routing
 usage() {
-    echo "Usage: $0 {build|run}"
+    echo "Usage: $0 {build|run [-w folder] [--] [command...]}"
     echo "Examples:"
-    echo "  $0 build            # Build (or rebuild) the image"
-    echo "  $0 run              # Build if needed, then launch the sandbox"
+    echo "  $0 build                        # Build (or rebuild) the image"
+    echo "  $0 run                          # Build if needed, then launch the sandbox"
+    echo "  $0 run -w myproject             # Launch inside a workspace subdirectory"
+    echo "  $0 run opencode -c              # Run a command directly instead of an interactive shell"
+    echo "  $0 run -w myproject opencode -c # Run a command inside a workspace subdirectory"
+    echo "  $0 run -- ls -l                 # Pass commands starting with a hyphen"
     echo
     echo "The image can be personally overridden via a Containerfile at"
     echo "\$HOME/.local/share/paddock/Containerfile, which takes precedence over"
@@ -178,7 +216,8 @@ case "${ACTION}" in
         build
         ;;
     run)
-        run
+        shift
+        run "$@"
         ;;
     *)
         error "Unknown action '${ACTION}'. Use 'build' or 'run'."
