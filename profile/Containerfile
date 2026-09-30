@@ -67,7 +67,10 @@ RUN groupadd --gid 1000 ai && \
     chown ai:ai /home/ai
 
 # 5. Global configurations
-RUN echo 'eval "$(starship init bash)"' >> /etc/bash.bashrc
+# aaa_base runs tty unconditionally; under krun it fails on /dev/console and prints an error per shell start.
+RUN echo 'eval "$(starship init bash)"' >> /etc/bash.bashrc && \
+    sed -i 's|GPG_TTY="`tty`"|GPG_TTY="`tty 2>/dev/null`"|' /etc/bash.bashrc && \
+    grep -qF 'tty 2>/dev/null' /etc/bash.bashrc
 
 # 6. Copy and setup entrypoint script for secure guest VM privilege dropping
 COPY --chmod=755 profile/entrypoint.sh /usr/local/bin/entrypoint.sh

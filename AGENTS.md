@@ -214,6 +214,10 @@ Worth knowing:
   accepts it. The host-side tmpfs does get `noexec,nosuid,nodev` and `size=`, but the guest sees
   it as a virtiofs submount with default flags and only the size limit carries over. libkrun
   1.19.x's init ignores the spec's tmpfs options, so this remount is the only in-guest fix today.
+- **`tty` noise is silenced in `/etc/bash.bashrc`**: `aaa_base` runs `tty` for `GPG_TTY` behind a
+  `test -t` that is always true, and under krun stdin is `/dev/console`, where `ttyname` fails
+  (`ttyname error: Inappropriate ioctl for device`, once per sourcing). The Containerfile `sed`
+  only redirects that call's stderr, and its `grep` fails the build if `aaa_base` changes the line.
 - **Build context is the repo root** (`podman build -f profile/Containerfile $ROOT_DIR`);
   `profile/Containerfile` relies on this for `COPY profile/entrypoint.sh`.
 - **The image is x86_64-only.** It unconditionally installs the Google Cloud CLI from the
