@@ -1,4 +1,13 @@
 -------------------------------------------------------------------
+Wed Sep 30 12:14:12 UTC 2026 - Jan Baier <jbaier@suse.cz>
+
+- Support custom working directory (-w <folder>) and arbitrary
+  command execution in paddock run.
+- Always route command execution through a login shell so profile
+  scripts and environment variables are initialized.
+- Validate -w directory paths against traversal and symlink escapes.
+
+-------------------------------------------------------------------
 Tue Sep 22 09:47:48 UTC 2026 - Jan Baier <jbaier@suse.cz>
 
 - Drop the jq/openssl BuildRequires: gemini-cli is now installed from
