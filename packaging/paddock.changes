@@ -1,4 +1,14 @@
 -------------------------------------------------------------------
+Wed Sep 30 14:35:22 UTC 2026 - Jan Baier <jbaier@suse.cz>
+
+- Enforce noexec,nosuid,nodev on /tmp inside the krun guest: the
+  guest mounts it without the --tmpfs flags, so the entrypoint
+  remounts /tmp before dropping privileges.
+- Silence the 'tty: ttyname error' printed on every shell start
+  under krun by redirecting stderr of the GPG_TTY lookup in
+  /etc/bash.bashrc.
+
+-------------------------------------------------------------------
 Wed Sep 30 12:14:12 UTC 2026 - Jan Baier <jbaier@suse.cz>
 
 - Support custom working directory (-w <folder>) and arbitrary
