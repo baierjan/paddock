@@ -26,6 +26,7 @@ RUN zypper --non-interactive refresh && \
         openssh-clients \
         openssl \
         python3 \
+        sqlite3 \
         starship \
         tar \
         unzip \
