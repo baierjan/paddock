@@ -108,10 +108,10 @@ You can also land in a specific workspace subdirectory or pass a command to run 
 ```
 To reach a server inside the sandbox from the host, publish a port. `-p` publishes `127.0.0.1:4096`; `-P` is passed verbatim to `podman run --publish` (repeatable):
 ```bash
-./paddock.sh run -p opencode serve --hostname :: # opencode server on 127.0.0.1:4096
+./paddock.sh run -p opencode serve --hostname :: --port 4096 # opencode server on 127.0.0.1:4096
 ./paddock.sh run -P 127.0.0.1:18080:8080 python3 -m http.server 8080 --bind 0.0.0.0
 ```
-Servers must bind `0.0.0.0` (IPv4) or `::` (IPv4 and IPv6) inside the sandbox, not `127.0.0.1`. `-p` always binds the host side to IPv4 loopback; with `-P`, a spec without a host address (e.g. `8080`) listens on all host interfaces, so give `127.0.0.1:` explicitly. The opencode server has no authentication by default. Publishing is per launch and never part of the baked `run` label. See [docs/setup.md](docs/setup.md) to make `opencode serve` listen on `::` by default.
+Servers must bind `0.0.0.0` (IPv4) or `::` (IPv4 and IPv6) inside the sandbox, not `127.0.0.1`. `-p` always binds the host side to IPv4 loopback; with `-P`, a spec without a host address (e.g. `8080`) listens on all host interfaces, so give `127.0.0.1:` explicitly. The opencode server is password-protected; the distro build has no browser UI, so connect with `opencode --server`. Publishing is per launch and never part of the baked `run` label. See [docs/setup.md](docs/setup.md) to make opencode's shared service listen on `::` and port 4096 by default.
 
 Commands are always routed through a login shell, ensuring `/etc/profile` and login profile scripts are sourced so environment variables are initialized.
 

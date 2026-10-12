@@ -173,10 +173,12 @@ stays unchanged; either option forces the direct path. Verified on a real host: 
 with `--network pasta` and `krun.use_passt=1` reaches the guest (krun's own passt sits behind
 podman's pasta). The entrypoint's `/tmp` remount needs a real `--tmpfs /tmp` mount, so
 hand-written `podman run` lines must include it. Tests 25-27.
-`opencode serve`/`web` read hostname/port defaults only from the global config in
-`~/.config/opencode` (not `OPENCODE_CONFIG`, project or `/etc/opencode` configs), which the home
-bind mount masks, so the image cannot ship them; `docs/setup.md` tells users to set them in their
-own home.
+opencode 2's shared service takes hostname/port/cors/password/env from
+`~/.config/opencode/service.json`, written by `opencode service set`; the `server` block in
+`opencode.json` is ignored. The home bind mount masks that file, so the image cannot ship it;
+`docs/setup.md` tells users to set it in their own home. Standalone `opencode serve` ignores it and
+takes `--hostname`/`--port`. The distro build has no web UI and disables runtime npm installs
+(plugins need `OPENCODE_ALLOW_NPM_INSTALL=1` in the service env).
 
 ## The Containerfile is personally overridable
 
