@@ -104,7 +104,7 @@ assert_argv() {
 
 # assert_log <fixed-substring> <description>
 assert_log() {
-    if ! grep -qF "$1" "${MOCK_LOG}"; then
+    if ! grep -qF -- "$1" "${MOCK_LOG}"; then
         echo "FAIL: $2" >&2
         cat "${MOCK_LOG}" >&2
         exit 1
@@ -114,7 +114,7 @@ assert_log() {
 
 # assert_no_log <fixed-substring> <description>
 assert_no_log() {
-    if grep -qF "$1" "${MOCK_LOG}"; then
+    if grep -qF -- "$1" "${MOCK_LOG}"; then
         echo "FAIL: $2" >&2
         cat "${MOCK_LOG}" >&2
         exit 1
