@@ -200,9 +200,6 @@ usage() {
     echo "  $0 run -P 127.0.0.1:18080:8080 python3 -m http.server 8080 --bind 0.0.0.0"
     echo "  $0 run -- ls -l                 # Pass commands starting with a hyphen"
     echo
-    echo "-p publishes 127.0.0.1:4096; -P SPEC is passed verbatim to podman --publish"
-    echo "(repeatable). Servers must bind 0.0.0.0 inside the sandbox."
-    echo
     echo "The image can be personally overridden via a Containerfile at"
     echo "\$HOME/.local/share/paddock/Containerfile, which takes precedence over"
     echo "the shipped profile/Containerfile."
