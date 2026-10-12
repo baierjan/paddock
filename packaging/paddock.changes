@@ -1,4 +1,10 @@
 -------------------------------------------------------------------
+Mon Oct 12 07:23:27 UTC 2026 - Jan Baier <jbaier@suse.cz>
+
+- Forward extra arguments of 'paddock build' to 'podman build',
+  e.g. 'paddock build --no-cache' rebuilds the image from scratch.
+
+-------------------------------------------------------------------
 Mon Oct  5 11:19:13 UTC 2026 - Jan Baier <jbaier@suse.cz>
 
 - Add 'run -p' (publish 127.0.0.1:4096) and 'run -P SPEC'

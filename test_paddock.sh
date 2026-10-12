@@ -519,6 +519,15 @@ reset_log
 assert_last_log "podman container runlabel run paddock:latest" "bare run still uses runlabel"
 assert_no_log "--publish" "bare run has no --publish"
 
+# Test 28: build forwards extra args to podman build, before the context dir
+echo "Test 28: build forwards extra args to podman build..."
+reset_log
+MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" build --no-cache --build-arg "X=a b"
+assert_last_log "podman build -t paddock:latest -f ${CONTAINERFILE} --label run=${LABEL} --no-cache --build-arg X=a b ${ROOT_DIR}" \
+    "build args are forwarded ahead of the context directory"
+assert_argv "<--no-cache><--build-arg><X=a b><${ROOT_DIR}>" \
+    "forwarded args stay separate argv tokens"
+
 echo "=== All Paddock Tests Passed Successfully ==="
 
 # Cleanup

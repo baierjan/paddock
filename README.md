@@ -72,7 +72,9 @@ paddock/
 `build` unconditionally (re)builds the image; run it again any time you edit the `Containerfile` or
 `entrypoint.sh`. `run` builds automatically too, but only when the image is missing or its baked-in
 run label is out of date (e.g. a `PADDOCK_*` env var changed); it does not pick up a Containerfile
-edit on its own, so run `build` explicitly after one.
+edit on its own, so run `build` explicitly after one. Extra arguments are forwarded to
+`podman build`, e.g. `./paddock.sh build --no-cache` rebuilds from scratch (add `--pull=always` to
+also refresh the base image).
 
 #### Overriding the Containerfile
 The image can be personally customized without touching a tracked file: a

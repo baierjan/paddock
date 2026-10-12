@@ -84,14 +84,14 @@ run_label() {
     echo "${SANDBOX_FLAGS[*]}"
 }
 
-# build -- unconditional build of the image.
+# build -- unconditional build of the image; args are forwarded to `podman build`.
 build() {
     require_podman
     local cf
     cf="$(resolved_containerfile)"
 
     info "Building image '${IMAGE}'..."
-    podman build -t "${IMAGE}" -f "${cf}" --label "run=$(run_label)" "${ROOT_DIR}"
+    podman build -t "${IMAGE}" -f "${cf}" --label "run=$(run_label)" "$@" "${ROOT_DIR}"
 }
 
 # Builds when image is missing or when resource limits in the baked run label changed.
@@ -189,9 +189,10 @@ run() {
 
 # Main routing
 usage() {
-    echo "Usage: $0 {build|run [-p] [-P publish]... [-w folder] [--] [command...]}"
+    echo "Usage: $0 {build [podman build args...]|run [-p] [-P publish]... [-w folder] [--] [command...]}"
     echo "Examples:"
     echo "  $0 build                        # Build (or rebuild) the image"
+    echo "  $0 build --no-cache             # Rebuild from scratch; extra args go to 'podman build'"
     echo "  $0 run                          # Build if needed, then launch the sandbox"
     echo "  $0 run -w myproject             # Launch inside a workspace subdirectory"
     echo "  $0 run opencode -c              # Run a command directly instead of an interactive shell"
@@ -224,7 +225,8 @@ fi
 
 case "${ACTION}" in
     build)
-        build
+        shift
+        build "$@"
         ;;
     run)
         shift

@@ -7,7 +7,7 @@ The entire project is Bash + Containerfiles: no package manager, no build system
 
 ```bash
 ./test_paddock.sh    # lint + tests; the only verification step
-./paddock.sh build   # unconditionally (re)build the image
+./paddock.sh build   # unconditionally (re)build the image; extra args go to `podman build` (e.g. --no-cache)
 ./paddock.sh run     # build if needed, then launch
 podman container runlabel run paddock:latest   # equivalent, needs no checkout
 ```
@@ -147,6 +147,9 @@ Consequences worth knowing:
   that a `$HOME`-relative `XDG_DATA_HOME` keeps the `$${}HOME` spelling and only bakes in the
   suffix, Test 10 that a non-`$HOME`-relative one bakes in a fully resolved path instead. Add new
   security flags to Test 7's list.
+- **`build` forwards its args to `podman build`**, placed after `--label` and before the context
+  dir. They never enter `run_label()`, so the staleness check is unaffected; `ensure_image()`'s
+  implicit builds pass none. Test 28.
 - `README.md` describes the flags **by name, with no numeric values**. Do not re-add concrete limits.
 
 `runlabel` expands only `$HOME`, `$PWD`, `$IMAGE`, `$NAME` and `$OPT1..3` (the last three via hidden
