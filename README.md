@@ -55,7 +55,7 @@ paddock/
 │   ├── entrypoint.sh       # Secure guest VM privilege-dropping entrypoint
 │   └── Containerfile       # Builds 'paddock:latest'
 ├── packaging/              # OBS/RPM packaging (spec, changes)
-├── docs/                   # Branding assets used by this README
+├── docs/                   # Setup guide and branding assets
 ├── paddock.sh              # Simple execution/orchestration shell script
 ├── test_paddock.sh         # Automated mock-based test suite
 └── README.md
@@ -104,6 +104,13 @@ You can also land in a specific workspace subdirectory or pass a command to run 
 ./paddock.sh run opencode -c              # Run command directly instead of shell
 ./paddock.sh run -w myproject opencode -c # Run command inside subdirectory
 ```
+To reach a server inside the sandbox from the host, publish a port. `-p` publishes `127.0.0.1:4096`; `-P` is passed verbatim to `podman run --publish` (repeatable):
+```bash
+./paddock.sh run -p opencode serve --hostname 0.0.0.0 # opencode server on 127.0.0.1:4096
+./paddock.sh run -P 127.0.0.1:18080:8080 python3 -m http.server 8080 --bind 0.0.0.0
+```
+Servers must bind `0.0.0.0` inside the sandbox, not `127.0.0.1`. `-p` always binds the host side to IPv4 loopback; with `-P`, a spec without a host address (e.g. `8080`) listens on all host interfaces, so give `127.0.0.1:` explicitly. The opencode server has no authentication by default. Publishing is per launch and never part of the baked `run` label. See [docs/setup.md](docs/setup.md) to make `opencode serve` listen on `0.0.0.0` by default.
+
 Commands are always routed through a login shell, ensuring `/etc/profile` and login profile scripts are sourced so environment variables are initialized.
 
 ---

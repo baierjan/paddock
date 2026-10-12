@@ -487,6 +487,38 @@ assert_fails "entrypoint aborts when a mount fails" \
     env PATH="${ENTRY_STUBS}:${PATH}" MOCK_MOUNT_FAIL=1 bash "${ROOT_DIR}/profile/entrypoint.sh" bash
 assert_no_log "setpriv" "a failed mount never reaches setpriv"
 
+# Test 25: -P forwards verbatim to --publish, repeatable, after the workdir and before the image
+echo "Test 25: run -P forwards to podman --publish..."
+reset_log
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run -P 127.0.0.1:9000:8080 -P 9001 echo hi)
+assert_last_log "${PODMAN_DIRECT_RUN} --workdir /home/ai/sandbox --publish 127.0.0.1:9000:8080 --publish 9001 paddock:latest echo hi" \
+    "-P is repeatable and passed through unchanged"
+assert_argv "<--publish><127.0.0.1:9000:8080><--publish><9001><paddock:latest>" \
+    "publish values are separate argv tokens"
+reset_log
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run -P 8080)
+assert_last_log "${PODMAN_DIRECT_RUN} --workdir /home/ai/sandbox --publish 8080 paddock:latest" \
+    "-P alone takes the direct path instead of runlabel"
+assert_fails "run -P without argument is rejected" \
+    env MOCK_IMAGES="${IMAGES}" bash -c "cd '${MOCK_WORKSPACE}' && '${ROOT_DIR}/paddock.sh' run -P"
+
+# Test 26: -p publishes 4096 on loopback and leaves the command alone
+echo "Test 26: run -p publishes 4096 on loopback..."
+reset_log
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run -p)
+assert_last_log "${PODMAN_DIRECT_RUN} --workdir /home/ai/sandbox --publish 127.0.0.1:4096:4096 paddock:latest" \
+    "-p publishes 4096 on loopback without adding a command"
+
+# Test 27: publishing never enters the baked label or bare runs
+echo "Test 27: publishing stays out of the baked label..."
+reset_log
+MOCK_IMAGES="" "${ROOT_DIR}/paddock.sh" build
+assert_no_log "--publish" "build label has no --publish"
+reset_log
+(cd "${MOCK_WORKSPACE}" && MOCK_IMAGES="${IMAGES}" "${ROOT_DIR}/paddock.sh" run)
+assert_last_log "podman container runlabel run paddock:latest" "bare run still uses runlabel"
+assert_no_log "--publish" "bare run has no --publish"
+
 echo "=== All Paddock Tests Passed Successfully ==="
 
 # Cleanup

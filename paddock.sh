@@ -27,6 +27,7 @@ resolved_containerfile() {
 
 # An array, not stdout, so paths with newlines cannot split argv tokens; callers must
 # re-invoke per use since run_label() leaves placeholder mount paths behind.
+# Args from $4 on (publish flags) are per-invocation, so run_label() passes none.
 sandbox_flags() {
     local ram="${PADDOCK_RAM_MIB:-8192}"
     local cpus="${PADDOCK_CPUS:-4}"
@@ -56,6 +57,7 @@ sandbox_flags() {
         --volume "$1:/home/ai:z"
         --volume "$2:/home/ai/sandbox:z"
         --workdir "$3"
+        "${@:4}"
         "${IMAGE}"
     )
 }
@@ -116,12 +118,19 @@ ensure_image() {
 
 run() {
     local folder=""
+    local publish=()
     local OPTIND=1 opt OPTARG
-    while getopts ":hw:" opt; do
+    while getopts ":hpP:w:" opt; do
         case "${opt}" in
             h)
                 usage
                 exit 0
+                ;;
+            p)
+                publish+=(--publish 127.0.0.1:4096:4096)
+                ;;
+            P)
+                publish+=(--publish "${OPTARG}")
                 ;;
             w)
                 folder="${OPTARG}"
@@ -170,24 +179,29 @@ run() {
     info "Home directory: ${home_host} -> /home/ai"
     info "Workspace: ${cwd} -> /home/ai/sandbox"
 
-    if [ -z "${folder}" ] && [ $# -eq 0 ]; then
+    if [ -z "${folder}" ] && [ $# -eq 0 ] && [ ${#publish[@]} -eq 0 ]; then
         podman container runlabel run "${IMAGE}"
     else
-        sandbox_flags "${home_host}" "${cwd}" "/home/ai/sandbox${folder:+/${folder}}"
+        sandbox_flags "${home_host}" "${cwd}" "/home/ai/sandbox${folder:+/${folder}}" "${publish[@]}"
         "${SANDBOX_FLAGS[@]}" "$@"
     fi
 }
 
 # Main routing
 usage() {
-    echo "Usage: $0 {build|run [-w folder] [--] [command...]}"
+    echo "Usage: $0 {build|run [-p] [-P publish]... [-w folder] [--] [command...]}"
     echo "Examples:"
     echo "  $0 build                        # Build (or rebuild) the image"
     echo "  $0 run                          # Build if needed, then launch the sandbox"
     echo "  $0 run -w myproject             # Launch inside a workspace subdirectory"
     echo "  $0 run opencode -c              # Run a command directly instead of an interactive shell"
     echo "  $0 run -w myproject opencode -c # Run a command inside a workspace subdirectory"
+    echo "  $0 run -p                       # Publish 127.0.0.1:4096 to the sandbox shell"
+    echo "  $0 run -P 127.0.0.1:18080:8080 python3 -m http.server 8080 --bind 0.0.0.0"
     echo "  $0 run -- ls -l                 # Pass commands starting with a hyphen"
+    echo
+    echo "-p publishes 127.0.0.1:4096; -P SPEC is passed verbatim to podman --publish"
+    echo "(repeatable). Servers must bind 0.0.0.0 inside the sandbox."
     echo
     echo "The image can be personally overridden via a Containerfile at"
     echo "\$HOME/.local/share/paddock/Containerfile, which takes precedence over"

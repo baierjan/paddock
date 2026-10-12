@@ -76,10 +76,11 @@ enforces the gate.
 flag, not the Containerfile. `build()` passes it to `podman build --label run=...` at build time,
 so it still ends up baked into the image. When launched without arguments, `paddock.sh run` delegates
 to `podman container runlabel run paddock:latest`. When launched with `-w` or a custom command,
-`paddock.sh run` parses options with `getopts` (supporting `-w <folder>`, `-h`, and `--` before
-commands starting with a hyphen), validates that `-w` stays within the workspace using `cd -P` and
-physical prefix matching, and executes `podman run` directly using the same `sandbox_flags()`, ensuring
-arguments and folder paths are passed cleanly as argv without being mangled by `runlabel`'s string-splitting.
+`paddock.sh run` parses options with `getopts` (supporting `-w <folder>`, `-p`, `-P <publish>`, `-h`,
+and `--` before commands starting with a hyphen), validates that `-w` stays within the workspace
+using `cd -P` and physical prefix matching, and executes `podman run` directly using the same
+`sandbox_flags()`, ensuring arguments and folder paths are passed cleanly as argv without being
+mangled by `runlabel`'s string-splitting.
 
 **A literal, still-unexpanded `$HOME`/`$PWD` cannot be spelled as `$HOME`/`$PWD` or `\$HOME`/`\$PWD`
 in this value: it must be `$${}HOME`/`$${}PWD`.** `podman build --label run=...` re-injects the
@@ -160,6 +161,19 @@ the argv** (it fails loudly as image-not-found, not silently).
 The baked-in label deliberately omits `--name` so concurrent launches from different directories get
 unique auto-generated names. A path cannot go there anyway: podman's `NameRegex` is
 `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`, which rejects `$PWD` for its slashes.
+
+**Port publishing is per-invocation, never in the label.** `-P SPEC` appends `--publish SPEC`
+verbatim (safe: direct `podman run` passes it as one argv token, unlike the shlex-split label);
+`-p` is shorthand for `--publish 127.0.0.1:4096:4096`. Both go through `sandbox_flags()`'s
+optional trailing args, passed only by the direct call, so `run_label()` (and its staleness check)
+stays unchanged; either option forces the direct path. Verified on a real host: plain `--publish`
+with `--network pasta` and `krun.use_passt=1` reaches the guest (krun's own passt sits behind
+podman's pasta). The entrypoint's `/tmp` remount needs a real `--tmpfs /tmp` mount, so
+hand-written `podman run` lines must include it. Tests 25-27.
+`opencode serve`/`web` read hostname/port defaults only from the global config in
+`~/.config/opencode` (not `OPENCODE_CONFIG`, project or `/etc/opencode` configs), which the home
+bind mount masks, so the image cannot ship them; `docs/setup.md` tells users to set them in their
+own home.
 
 ## The Containerfile is personally overridable
 

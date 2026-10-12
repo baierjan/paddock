@@ -1,4 +1,10 @@
 -------------------------------------------------------------------
+Mon Oct  5 11:19:13 UTC 2026 - Jan Baier <jbaier@suse.cz>
+
+- Add 'run -p' (publish 127.0.0.1:4096) and 'run -P SPEC'
+  (passed to podman --publish) to expose guest ports per launch.
+
+-------------------------------------------------------------------
 Wed Sep 30 14:35:22 UTC 2026 - Jan Baier <jbaier@suse.cz>
 
 - Enforce noexec,nosuid,nodev on /tmp inside the krun guest: the
