@@ -57,6 +57,7 @@ paddock/
 ├── packaging/              # OBS/RPM packaging (spec, changes)
 ├── docs/                   # Setup guide and branding assets
 ├── paddock.sh              # Simple execution/orchestration shell script
+├── sops-filter.sh          # Git filter that keeps tracked secrets sops-encrypted
 ├── test_paddock.sh         # Automated mock-based test suite
 └── README.md
 ```
@@ -114,6 +115,19 @@ To reach a server inside the sandbox from the host, publish a port. `-p` publish
 Servers must bind `0.0.0.0` (IPv4) or `::` (IPv4 and IPv6) inside the sandbox, not `127.0.0.1`. `-p` always binds the host side to IPv4 loopback; with `-P`, a spec without a host address (e.g. `8080`) listens on all host interfaces, so give `127.0.0.1:` explicitly. The opencode server is password-protected; the distro build has no browser UI, so connect with `opencode --server`. Publishing is per launch and never part of the baked `run` label. See [docs/setup.md](docs/setup.md) to make opencode's shared service listen on `::` and port 4096 by default.
 
 Commands are always routed through a login shell, ensuring `/etc/profile` and login profile scripts are sourced so environment variables are initialized.
+
+### 3. Version the Sandbox Home (optional)
+The sandbox home can live in a bare git repository, so deleting it and starting over restores your CLI configuration, skills, agents and shell setup:
+```bash
+./paddock.sh init                       # create ~/.local/share/paddock/home.git
+./paddock.sh git add .bashrc            # run git on the home; only added paths are tracked
+./paddock.sh git commit -m "Add bashrc"
+rm -rf ~/.local/share/paddock/home      # start over...
+./paddock.sh init                       # ...recreate the empty home
+./paddock.sh git checkout -f            # ...and bring the tracked files back
+./paddock.sh init git@host:me/home.git  # on another host: clone, then git checkout -f
+```
+Files with secrets can be tracked `sops`-encrypted. `paddock.sh git` needs git 2.54 or newer. See [docs/setup.md](docs/setup.md).
 
 ---
 

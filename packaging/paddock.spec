@@ -24,8 +24,9 @@ License:        Apache-2.0
 URL:            https://github.com/baierjan/paddock
 Source:         %{name}-%{version}.tar.gz
 # For %%check: test_paddock.sh mocks podman but still needs the real
-# shellcheck for the lint gate.
+# shellcheck for the lint gate and git for the home repository tests.
 BuildRequires:  ShellCheck
+BuildRequires:  git-core
 Requires:       %{_bindir}/krun
 Requires:       %{_bindir}/pasta
 Requires:       %{_bindir}/podman
@@ -50,6 +51,7 @@ guest RAM/vCPU/PID limits.
 
 %install
 install -Dm 0755 paddock.sh %{buildroot}%{_datadir}/%{name}/paddock.sh
+install -Dm 0755 sops-filter.sh %{buildroot}%{_datadir}/%{name}/sops-filter.sh
 install -Dm 0644 profile/Containerfile %{buildroot}%{_datadir}/%{name}/profile/Containerfile
 install -Dm 0755 profile/entrypoint.sh %{buildroot}%{_datadir}/%{name}/profile/entrypoint.sh
 

@@ -210,6 +210,57 @@ Worth knowing:
   constraints). A `COPY` in an override resolves relative to `$ROOT_DIR`, not to the override's own
   location under `~/.local/share/paddock/`.
 
+## The sandbox home is versioned in a bare repo
+
+`paddock.sh init [URL]` creates `~/.local/share/paddock/home.git` (bare; cloned from `URL` if
+given) with the sandbox home as its work tree; `paddock.sh git ...` is host git on it, run from
+inside the home. There is no restore command: after `rm -rf home`, `paddock.sh init` recreates the
+home and `paddock.sh git checkout -f` brings the tracked files back (it works with or without an
+index; git cannot check out into a missing work tree) and overwrites existing ones. `run` never
+restores, and `home_git()` has no side effects: it only checks that the repo and home exist and
+runs git. `init` does all setup and is safe to repeat. `init URL` runs `read-tree HEAD`
+because a bare clone's empty index would make the first commit delete every file. `init` re-applies
+the repo config (idempotent), so a half-created or hand-made repo is repaired. A bare
+`podman container runlabel` cannot restore either: run `init` and `git checkout -f` first.
+
+- **The git dir must never be mounted into the sandbox.** A guest-writable `config` or `hooks`
+  would run on the host at the next git call. Tracked work-tree files are guest-writable by design;
+  review `paddock.sh git diff` before committing.
+- **Untracked files are hidden** (`status.showUntrackedFiles no`) but `git add .` would stage the
+  whole home; that is left to the user on purpose. A guest `.gitignore` could override any
+  `info/exclude` guard anyway.
+- **Secrets use a sops clean/smudge filter** (`sops-filter.sh`). `configure_home_git()` stores it,
+  `attr.tree`, and the hooks in `home.git/config`, so plain `git --git-dir=… --work-tree=…` behaves
+  like `paddock.sh git`. The commands hold the absolute script path in single quotes (a quote in
+  the path is unsupported); only `init` writes them, so a moved checkout needs `init` again.
+  `filter.sops.required=true` makes a missing or stale filter fail loudly instead of storing
+  plaintext. git exports `GIT_DIR` to filters and hooks, so their `git cat-file` works.
+- **`.gitattributes` and `.sops.yaml` are tracked, but read from `HEAD`**, never from the
+  guest-writable home: `attr.tree=HEAD` for attributes, and the filter passes
+  `sops --config <HEAD:.sops.yaml>` (empty if not committed, so encryption fails loudly instead of
+  sops finding a `.sops.yaml` in the home). A guest edit takes effect only once the user commits it
+  (sops follows key services named in its config, e.g. `hc_vault_transit_uri`, with the host's
+  credentials). Nothing is encrypted by default; `service.json` in the docs is only an example.
+- **Reading attributes from `HEAD` has two gaps, closed by config-based hooks** (`hook.<name>.*`,
+  git 2.54+; older git ignores them silently, and there is deliberately no version check): a
+  secret committed together with its new rule is staged unfiltered, so a `pre-commit` hook (`check`)
+  rejects filtered paths whose staged blob lacks the sops MAC; and a pull writes files under the
+  old `HEAD`'s attributes, so `post-merge`/`post-checkout` (`refresh`) re-checks out filtered files
+  that still contain ciphertext.
+- **sops output is non-deterministic**, so `clean` reuses the staged ciphertext when it decrypts
+  to the same content as a fresh encryption of the input (it compares with the index, like git
+  does, not with `HEAD`); otherwise git sees a modification forever. The comparison goes through
+  sops on both sides because sops re-formats JSON. If the staged blob cannot be decrypted (no key)
+  it emits the fresh ciphertext; an encrypt failure aborts (`required=true`), never staging stale
+  or plaintext content. The `diff` textconv is JSON-only.
+- Decrypted files are written with the caller's umask; the home's privacy is that of the user's
+  home directory, as it was before.
+- **The packaged install must ship `sops-filter.sh`** next to `paddock.sh` (`paddock.spec`).
+- Tests 29-39 use real `git` (they skip without it) and a reversible fake `sops` in `mock_bin/`
+  whose ciphertext differs on every call. `/dev/stdin` does not exist in every environment
+  (paddock sandboxes lack it), so the fake reads stdin with plain `cat`. They never run real sops,
+  so sops flag changes need a manual check.
+
 ## Architecture constraints
 
 - **Pristine home**: `/home/ai` must stay completely empty in the image (`useradd --no-create-home`,

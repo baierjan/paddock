@@ -11,6 +11,10 @@ DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}/paddock"
 
 IMAGE="paddock:latest"
 
+HOME_DIR="${DATA_HOME}/home"
+# Bare repo versioning the sandbox home; outside the home so the guest cannot reach it.
+HOME_GIT="${DATA_HOME}/home.git"
+
 info() { echo -e "\033[1;34m[INFO]\033[0m $*"; }
 error() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; exit 1; }
 
@@ -116,6 +120,65 @@ ensure_image() {
     fi
 }
 
+require_git() {
+    command -v git >/dev/null 2>&1 || error "Git is required but not installed."
+}
+
+# In the repo config so plain git behaves like `paddock.sh git`; attributes come from HEAD, not the home.
+configure_home_git() {
+    local config=(git --git-dir="${HOME_GIT}" config)
+    # shortcut: a single quote in the install path breaks these commands, escape it if that matters.
+    local f="'${ROOT_DIR}/sops-filter.sh'"
+    "${config[@]}" status.showUntrackedFiles no
+    "${config[@]}" attr.tree HEAD
+    "${config[@]}" filter.sops.required true
+    "${config[@]}" filter.sops.clean "${f} clean %f"
+    "${config[@]}" filter.sops.smudge "${f} smudge %f"
+    "${config[@]}" diff.sops.textconv "${f} diff"
+    "${config[@]}" hook.paddock-sops-check.event pre-commit
+    "${config[@]}" hook.paddock-sops-check.command "${f} check"
+    "${config[@]}" hook.paddock-sops-merge.event post-merge
+    "${config[@]}" hook.paddock-sops-merge.command "${f} refresh"
+    "${config[@]}" hook.paddock-sops-checkout.event post-checkout
+    "${config[@]}" hook.paddock-sops-checkout.command "${f} refresh"
+}
+
+# No side effects: `init` does all setup.
+home_git() {
+    require_git
+    [ -d "${HOME_GIT}" ] || error "No home repository at ${HOME_GIT}; run '$0 init [URL]' first."
+    [ -d "${HOME_DIR}" ] || error "${HOME_DIR} is missing; run '$0 init' to create it."
+    (cd "${HOME_DIR}" && git --git-dir="${HOME_GIT}" --work-tree="${HOME_DIR}" "$@")
+}
+
+# init [URL]: create or clone the home repo and home dir; rerun after moving the checkout to refresh the config.
+init() {
+    require_git
+    local url="${1:-}" branch
+    local git=(git --git-dir="${HOME_GIT}")
+    if [ -d "${HOME_GIT}" ]; then
+        [ -z "${url}" ] || error "${HOME_GIT} already exists; remove it to clone '${url}'."
+    else
+        mkdir -p "${DATA_HOME}"
+        if [ -n "${url}" ]; then
+            git clone --bare -- "${url}" "${HOME_GIT}"
+            "${git[@]}" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+            # A bare clone sets no upstream, which plain push and pull need.
+            branch="$("${git[@]}" symbolic-ref --short HEAD)"
+            "${git[@]}" config "branch.${branch}.remote" origin
+            "${git[@]}" config "branch.${branch}.merge" "refs/heads/${branch}"
+            # A bare clone has an empty index, so the first commit would delete every file.
+            ! "${git[@]}" rev-parse --quiet --verify HEAD >/dev/null || "${git[@]}" read-tree HEAD
+        else
+            git init --bare -- "${HOME_GIT}"
+        fi
+    fi
+    configure_home_git
+    mkdir -p "${HOME_DIR}"
+    info "Home repository: ${HOME_GIT} (work tree ${HOME_DIR})"
+    info "Restore the tracked files into the home with '$0 git checkout -f'."
+}
+
 run() {
     local folder=""
     local publish=()
@@ -170,7 +233,7 @@ run() {
     ensure_image
 
     # Pre-created so it's owned by the invoking user, not by podman.
-    local home_host="${DATA_HOME}/home"
+    local home_host="${HOME_DIR}"
     mkdir -p "${home_host}"
 
     # Listed in mount order: the home volume lands on /home/ai first, then the
@@ -189,7 +252,7 @@ run() {
 
 # Main routing
 usage() {
-    echo "Usage: $0 {build [podman build args...]|run [-p] [-P publish]... [-w folder] [--] [command...]}"
+    echo "Usage: $0 {build [podman build args...]|run [-p] [-P publish]... [-w folder] [--] [command...]|init [URL]|git [git args...]}"
     echo "Examples:"
     echo "  $0 build                        # Build (or rebuild) the image"
     echo "  $0 build --no-cache             # Rebuild from scratch; extra args go to 'podman build'"
@@ -200,6 +263,10 @@ usage() {
     echo "  $0 run -p                       # Publish 127.0.0.1:4096 to the sandbox shell"
     echo "  $0 run -P 127.0.0.1:18080:8080 python3 -m http.server 8080 --bind 0.0.0.0"
     echo "  $0 run -- ls -l                 # Pass commands starting with a hyphen"
+    echo "  $0 init                         # Create the home repository (see docs/setup.md)"
+    echo "  $0 init git@host:me/home.git    # Clone an existing home repository"
+    echo "  $0 git checkout -f              # Restore the tracked files into the home"
+    echo "  $0 git add .bashrc              # Run git on the home repository"
     echo
     echo "The image can be personally overridden via a Containerfile at"
     echo "\$HOME/.local/share/paddock/Containerfile, which takes precedence over"
@@ -232,7 +299,15 @@ case "${ACTION}" in
         shift
         run "$@"
         ;;
+    init)
+        shift
+        init "$@"
+        ;;
+    git)
+        shift
+        home_git "$@"
+        ;;
     *)
-        error "Unknown action '${ACTION}'. Use 'build' or 'run'."
+        error "Unknown action '${ACTION}'. Use 'build', 'run', 'init' or 'git'."
         ;;
 esac
